@@ -212,10 +212,11 @@ export default function Home() {
     }).catch((error: Error) => setToast(error.message));
   };
 
-  const saveReportPdf = async () => {
+  const saveReportPdf = async (action: 'save' | 'share' = 'save') => {
     if (!reportRef.current) return;
     let clone: HTMLElement | null = null;
     try {
+      setToast(action === 'share' ? "جاري تجهيز التقرير للمشاركة..." : "جاري حفظ التقرير...");
       clone = reportRef.current.cloneNode(true) as HTMLElement;
       clone.querySelectorAll(".report-controls,.report-actions,.account-global-report,.legacy-report").forEach((node) => node.remove());
       clone.style.width = "794px";
@@ -241,16 +242,33 @@ export default function Home() {
         pdf.addImage(pageCanvas.toDataURL("image/jpeg", 0.92), "JPEG", 10, 10, pageWidth, sliceHeight * pageWidth / canvas.width);
       }
       const fileName = `تقرير-${new Date().toISOString().slice(0, 10)}.pdf`;
+      
       if (Capacitor.isNativePlatform()) {
         await Filesystem.mkdir({ path: "mgk", directory: Directory.Documents, recursive: true }).catch(() => undefined);
-        await Filesystem.writeFile({ path: `mgk/${fileName}`, data: pdf.output("datauristring").split(",")[1], directory: Directory.Documents, recursive: true });
-        setToast("تم حفظ التقرير في مجلد Documents/mgk");
+        const uri = await Filesystem.writeFile({ path: `mgk/${fileName}`, data: pdf.output("datauristring").split(",")[1], directory: Directory.Documents, recursive: true });
+        
+        if (action === 'share') {
+          await Share.share({ title: "تقرير حساب", url: uri.uri, dialogTitle: "مشاركة التقرير" });
+        } else {
+          setToast("تم حفظ التقرير في مجلد Documents/mgk");
+        }
       } else {
-        pdf.save(fileName);
-        setToast("تم تحميل التقرير");
+        if (action === 'share') {
+          const blob = pdf.output("blob");
+          const file = new File([blob], fileName, { type: "application/pdf" });
+          if (navigator.share && navigator.canShare?.({ files: [file] })) {
+            await navigator.share({ title: "تقرير حساب", files: [file] });
+          } else {
+            pdf.save(fileName);
+            setToast("المتصفح لا يدعم المشاركة، تم التحميل بدلاً من ذلك");
+          }
+        } else {
+          pdf.save(fileName);
+          setToast("تم تحميل التقرير");
+        }
       }
     } catch {
-      setToast("فشل حفظ التقرير");
+      setToast("فشل عملية التصدير");
     } finally {
       clone?.remove();
     }
@@ -602,7 +620,7 @@ export default function Home() {
                   <p>هذا ملخص سريع لوضعك المالي الحالي.</p>
                 </div>
                 <div className="hero-actions">
-                  <button className="secondary-button" onClick={() => setToast("جاري التصدير...")}><Download size={17} /> تصدير التقرير</button>
+                  <button className="secondary-button" onClick={() => setActiveView("reports")}><FileText size={17} /> فتح التقارير</button>
                   <button className="primary-button" onClick={() => setShowTransaction(true)}><Plus size={18} /> عملية جديدة</button>
                 </div>
               </section>
@@ -816,7 +834,8 @@ export default function Home() {
               <div className="view-heading">
                 <div><div className="eyebrow"><BarChart3 size={15} /> التحليلات</div><h1>التقارير والكشوفات</h1><p>استخراج وطباعة كشوفات الحسابات.</p></div>
                 <div className="report-actions">
-                  <button className="secondary-button" onClick={saveReportPdf}><Download size={17} /> حفظ PDF</button>
+                  <button className="secondary-button" onClick={() => saveReportPdf('save')}><Download size={17} /> حفظ PDF</button>
+                  <button className="secondary-button" onClick={() => saveReportPdf('share')}><Share2 size={17} /> مشاركة PDF</button>
                   <button className="secondary-button" onClick={shareCustomerReport}><Share2 size={17} /> مشاركة واتساب</button>
                 </div>
               </div>
