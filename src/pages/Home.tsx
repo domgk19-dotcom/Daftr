@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowDownLeft, ArrowUpLeft, BarChart3, Bell, BookOpen, CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, CircleDollarSign, Clock3, Download, FileBarChart, FileText, Filter, LayoutDashboard, Menu, MoreHorizontal, Pencil, Plus, RefreshCcw, Search, Share2, Settings, SlidersHorizontal, Sparkles, Trash2, TrendingUp, UserRound, UsersRound, WalletCards, ShieldCheck, ShieldAlert, KeyRound, Copy, X } from "lucide-react";
+import { ArrowDownLeft, ArrowUpLeft, BarChart3, Bell, BookOpen, CalendarDays, Check, ChevronDown, ChevronLeft, ChevronRight, CircleDollarSign, Clock3, Download, FileBarChart, FileText, Filter, LayoutDashboard, Menu, MoreHorizontal, Pencil, Plus, RefreshCcw, Search, Share2, Settings, SlidersHorizontal, Sparkles, Trash2, TrendingUp, UserRound, UsersRound, WalletCards, ShieldCheck, ShieldAlert, KeyRound, Copy, X, Sun, Moon, MessageCircle, CheckCircle2 } from "lucide-react";
 import { createEmptyDatabase, insertSalesVoucher, insertPurchaseVoucher, saveShopSettings, deleteCustomer, deleteCurrency, deleteTransaction, exportDatabase, importDatabase, insertCurrency, insertCustomer, insertTransaction, readAccountingData, updateCurrency, updateCustomer, updateTransaction, type DbCatalogItem, type DbCustomer, type DbCurrency, type DbShopSettings, type DbTransaction } from "../lib/accountingDb";
 import { LicenseService, type LicenseInfo } from "../lib/licenseService";
 import { Capacitor } from "@capacitor/core";
@@ -21,6 +21,7 @@ const navItems = [
   { id: "currencies", label: "العملات", icon: CircleDollarSign },
   { id: "reports", label: "التقارير", icon: FileBarChart },
   { id: "analytics", label: "ذكاء الأعمال", icon: Sparkles },
+  { id: "whatsapp", label: "مراسلة العملاء", icon: MessageCircle },
 ];
 
 const formatMoney = (value: number, currency?: Pick<DbCurrency, "symbol" | "code">) => `${Math.abs(value).toLocaleString("en-US")} ${currency?.symbol || currency?.code || ""}`.trim();
@@ -73,6 +74,10 @@ export default function Home() {
   const [catalogItems, setCatalogItems] = useState<DbCatalogItem[]>([]);
   const [catalogUnits, setCatalogUnits] = useState<DbCatalogItem[]>([]);
   const [shopSettings, setShopSettings] = useState<DbShopSettings>({ id: 1, name: "اسم المحل", phone: "", logo: "", country: "اليمن", countryCode: "+967", defaultCurrencyId: 1 });
+  const [isDarkMode, setIsDarkMode] = useState(false);
+  const [notifications, setNotifications] = useState<{text: string, action?: string}[]>([]);
+  const [showNotifications, setShowNotifications] = useState(false);
+  const [reminderDay, setReminderDay] = useState<string>(() => localStorage.getItem("daftar-reminder-day") || "none");
   const [voucherType, setVoucherType] = useState<"sales" | "purchase">("sales");
   const [showSalesVoucher, setShowSalesVoucher] = useState(false);
   const [salesRows, setSalesRows] = useState<{ item: string; quantity: number; unit: string; amount: number }[]>([]);
@@ -105,11 +110,29 @@ export default function Home() {
   const [backupFrequency, setBackupFrequency] = useState<"daily" | "hourly">(() => localStorage.getItem("daftar-backup-frequency") === "hourly" ? "hourly" : "daily");
   const [menuOpen, setMenuOpen] = useState(false);
   const [toast, setToast] = useState("");
+  const [contactedIds, setContactedIds] = useState<number[]>([]);
+  const [waCustomerForPdf, setWaCustomerForPdf] = useState<DbCustomer | null>(null);
   const [licenseInfo, setLicenseInfo] = useState<LicenseInfo>(() => LicenseService.checkStatus());
   const [licenseKey, setLicenseKey] = useState("");
   const [licenseClientName, setLicenseClientName] = useState("");
   const [licenseMessage, setLicenseMessage] = useState("");
   const reportRef = useRef<HTMLElement>(null);
+
+  useEffect(() => {
+    if (isDarkMode) document.body.classList.add('dark');
+    else document.body.classList.remove('dark');
+  }, [isDarkMode]);
+
+  useEffect(() => {
+    const alerts: string[] = [];
+    const today = new Date().toISOString().slice(0, 10);
+    const todayTx = transactions.filter(t => t.date === today);
+    if (todayTx.length > 0) alerts.push(`لديك ${todayTx.length} عملية مالية اليوم.`);
+    const negativeCustomers = customers.filter(c => c.balance < 0);
+    if (negativeCustomers.length > 0) alerts.push(`تنبيه: ${negativeCustomers.length} حسابات رصيدها دائن (مطلوب).`);
+    if (licenseInfo.isTrial) alerts.push(`النسخة التجريبية متبقي منها ${licenseInfo.trialDaysLeft} يوم.`);
+    setNotifications(alerts.length ? alerts : ["لا توجد تنبيهات مهمة حالياً"]);
+  }, [transactions, customers, licenseInfo]);
 
   useEffect(() => {
     readAccountingData().then((data) => {
@@ -590,6 +613,41 @@ export default function Home() {
     refreshData(data, "تم تصفير قاعدة البيانات");
   };
 
+  const handleWhatsAppSend = (customer: DbCustomer) => {
+    setWaCustomerForPdf(customer);
+    setToast("جاري تجهيز كشف الحساب وتجهيز الواتساب...");
+    setTimeout(async () => {
+      try {
+        const element = document.getElementById("whatsapp-pdf-content");
+        if (element) {
+          const canvas = await html2canvas(element, { scale: 2 });
+          const imgData = canvas.toDataURL("image/png");
+          const pdf = new jsPDF("p", "mm", "a4");
+          const pdfWidth = pdf.internal.pageSize.getWidth();
+          const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
+          pdf.addImage(imgData, "PNG", 0, 0, pdfWidth, pdfHeight);
+          pdf.save(`كشف_حساب_${customer.name}.pdf`);
+        }
+        setContactedIds((prev) => [...prev, customer.id]);
+        const cleanPhone = customer.phone.replace(/[^\d+]/g, "");
+        let finalPhone = cleanPhone;
+        if (!finalPhone.startsWith("+") && !finalPhone.startsWith("00")) {
+          const code = shopSettings.countryCode.replace(/\D/g, "");
+          if (finalPhone.startsWith("0")) finalPhone = finalPhone.substring(1);
+          finalPhone = `${code}${finalPhone}`;
+        } else {
+          finalPhone = finalPhone.replace(/\D/g, "");
+        }
+        const msg = `مرحباً ${customer.name}،\nتحية طيبة من [${shopSettings.name}].\n\nنرفق لكم كشف الحساب التفصيلي الخاص بكم.\nيرجى مراجعته والتواصل معنا في حال وجود أي استفسار.\n\nشكراً لتعاملكم معنا.`;
+        window.open(`https://wa.me/${finalPhone}?text=${encodeURIComponent(msg)}`, "_blank");
+        setWaCustomerForPdf(null);
+      } catch (err) {
+        setToast("حدث خطأ أثناء تجهيز التقرير");
+        setWaCustomerForPdf(null);
+      }
+    }, 500);
+  };
+
   const handleNav = (id: string) => {
     setActiveView(id);
     setQuery("");
@@ -654,8 +712,27 @@ export default function Home() {
         <header className="topbar">
           <button className="mobile-menu icon-button" onClick={() => setMenuOpen(true)}><Menu size={22} /></button>
           <div className="breadcrumb"><span>الرئيسية</span><ChevronLeft size={15} /><b>{title}</b></div>
-          <div className="topbar-actions">
-            <button className="icon-button notification" aria-label="الإشعارات" onClick={() => setToast("لا توجد إشعارات جديدة")}><Bell size={19} /><i /></button>
+          <div className="topbar-actions" style={{ position: 'relative' }}>
+            <button className="icon-button" aria-label="تبديل المظهر" onClick={() => setIsDarkMode(!isDarkMode)}>
+              {isDarkMode ? <Sun size={19} /> : <Moon size={19} />}
+            </button>
+            <button className="icon-button notification" aria-label="الإشعارات" onClick={() => setShowNotifications(!showNotifications)}>
+              <Bell size={19} />
+              {notifications.length > 0 && notifications[0] !== "لا توجد تنبيهات مهمة حالياً" && <i />}
+            </button>
+            {showNotifications && (
+              <>
+                <div style={{ position: 'fixed', inset: 0, zIndex: 40 }} onClick={() => setShowNotifications(false)} />
+                <div style={{ position: 'absolute', top: '100%', left: 0, marginTop: 8, width: 280, background: 'var(--surface, #fff)', border: '1px solid var(--line)', borderRadius: 12, boxShadow: '0 10px 40px rgba(0,0,0,0.1)', zIndex: 50, overflow: 'hidden' }} className="notifications-dropdown">
+                  <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--line)', fontWeight: 'bold', fontSize: 13, background: 'var(--soft, #f7f9f8)', color: 'var(--ink)' }}>الإشعارات والتنبيهات</div>
+                  <div style={{ maxHeight: 300, overflowY: 'auto' }}>
+                    {notifications.map((note, i) => (
+                      <div key={i} style={{ padding: '12px 16px', borderBottom: '1px solid var(--line)', fontSize: 11, color: 'var(--muted)', lineHeight: 1.6 }}>{note}</div>
+                    ))}
+                  </div>
+                </div>
+              </>
+            )}
           </div>
         </header>
 
@@ -1158,6 +1235,60 @@ export default function Home() {
             </section>
           )}
 
+          {activeView === "whatsapp" && (
+            <section className="inner-view">
+              <div className="view-heading">
+                <div><div className="eyebrow"><MessageCircle size={15} /> التواصل مع العملاء</div><h1>مراسلة العملاء (واتساب)</h1><p>إرسال كشوفات الحسابات المتأخرة للعملاء عبر الواتساب بشكل مباشر.</p></div>
+              </div>
+              <div className="card table-card">
+                <div className="table-toolbar">
+                  <div className="search-box"><Search size={16} /><input type="text" placeholder="البحث برقم الهاتف أو اسم العميل..." value={query} onChange={(e) => setQuery(e.target.value)} /></div>
+                </div>
+                <div className="table-wrap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>العميل</th>
+                        <th>رقم الهاتف</th>
+                        <th>إجمالي الرصيد (مطلوب)</th>
+                        <th>حالة التواصل</th>
+                        <th>إجراء</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {customers
+                        .filter(c => c.phone && c.balance < 0)
+                        .filter(c => !query || c.name.includes(query) || c.phone.includes(query))
+                        .map(c => (
+                        <tr key={c.id}>
+                          <td><b>{c.name}</b></td>
+                          <td dir="ltr" style={{ textAlign: "right" }}>{c.phone}</td>
+                          <td className="debit">{formatMoney(c.balance, currencies.find(curr => curr.id === shopSettings.defaultCurrencyId))}</td>
+                          <td>
+                            {contactedIds.includes(c.id) ? (
+                              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, color: '#16815e', fontSize: 10, background: '#e4f6ee', padding: '4px 8px', borderRadius: 20 }}><CheckCircle2 size={12} /> تم التواصل</span>
+                            ) : (
+                              <span style={{ color: '#9ca8aa', fontSize: 10 }}>لم يتم التواصل</span>
+                            )}
+                          </td>
+                          <td>
+                            <button className="primary-button compact" onClick={() => handleWhatsAppSend(c)}><MessageCircle size={14} /> إرسال كشف حساب</button>
+                          </td>
+                        </tr>
+                      ))}
+                      {customers.filter(c => c.phone && c.balance < 0).length === 0 && (
+                        <tr><td colSpan={5} style={{ textAlign: 'center', padding: 30 }}>لا يوجد عملاء لديهم مديونية وأرقام هواتف مسجلة.</td></tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+                <div style={{ padding: 15, background: '#fff0eb', borderRadius: 8, marginTop: 15, fontSize: 11, color: '#c96850', display: 'flex', gap: 8, alignItems: 'center' }}>
+                  <Bell size={16} /> <b>ملاحظة هامة:</b> سيتم تنزيل ملف PDF (كشف الحساب) في جهازك، وفتح تطبيق واتساب بالرسالة التلقائية. يرجى إرفاق الملف يدوياً داخل المحادثة.
+                </div>
+              </div>
+            </section>
+          )}
+
           {activeView === "currencies" && (
             <section className="inner-view">
               <div className="view-heading">
@@ -1373,6 +1504,67 @@ export default function Home() {
           </button>
         ))}
       </nav>
+
+      {waCustomerForPdf && (
+        <div style={{ position: 'absolute', top: '-9999px', left: '-9999px', width: '800px', background: '#fff', color: '#000', direction: 'rtl' }}>
+          <div id="whatsapp-pdf-content" style={{ padding: '40px', background: '#fff' }}>
+            <div style={{ textAlign: 'center', marginBottom: 30, borderBottom: '2px solid #13795b', paddingBottom: 20 }}>
+              <h1 style={{ margin: 0, fontSize: 24, color: '#13795b' }}>{shopSettings.name}</h1>
+              <h2 style={{ margin: '10px 0 5px', fontSize: 18, color: '#333' }}>كشف حساب تفصيلي</h2>
+              <div style={{ fontSize: 14, color: '#666' }}>تاريخ الإصدار: {new Date().toLocaleDateString('en-GB')}</div>
+            </div>
+            
+            <div style={{ marginBottom: 20, display: 'flex', justifyContent: 'space-between', fontSize: 16 }}>
+              <div><b>اسم العميل/المورد:</b> {waCustomerForPdf.name}</div>
+              <div><b>رقم الهاتف:</b> {waCustomerForPdf.phone || 'غير مسجل'}</div>
+            </div>
+
+            <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: 30, fontSize: 14 }}>
+              <thead>
+                <tr>
+                  <th style={{ padding: 10, borderBottom: '1px solid #ddd', textAlign: 'right', background: '#f5f7f6', color: '#333' }}>التاريخ</th>
+                  <th style={{ padding: 10, borderBottom: '1px solid #ddd', textAlign: 'right', background: '#f5f7f6', color: '#333' }}>البيان</th>
+                  <th style={{ padding: 10, borderBottom: '1px solid #ddd', textAlign: 'right', background: '#f5f7f6', color: '#333' }}>العملة</th>
+                  <th style={{ padding: 10, borderBottom: '1px solid #ddd', textAlign: 'right', background: '#f5f7f6', color: '#333' }}>مدين (عليه)</th>
+                  <th style={{ padding: 10, borderBottom: '1px solid #ddd', textAlign: 'right', background: '#f5f7f6', color: '#333' }}>دائن (له)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {transactions.filter(t => t.customerId === waCustomerForPdf.id).map(t => (
+                  <tr key={t.id}>
+                    <td style={{ padding: 10, borderBottom: '1px solid #eee', color: '#333' }}>{t.date}</td>
+                    <td style={{ padding: 10, borderBottom: '1px solid #eee', color: '#333' }}>{t.description}</td>
+                    <td style={{ padding: 10, borderBottom: '1px solid #eee', color: '#333' }}>{currencies.find(c => c.id === t.currencyId)?.code || ''}</td>
+                    <td style={{ padding: 10, borderBottom: '1px solid #eee', color: t.type === 'debit' ? '#c96850' : '#333' }}>{t.type === 'debit' ? t.amount.toLocaleString('en-US') : '-'}</td>
+                    <td style={{ padding: 10, borderBottom: '1px solid #eee', color: t.type === 'credit' ? '#17825d' : '#333' }}>{t.type === 'credit' ? t.amount.toLocaleString('en-US') : '-'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+
+            <div style={{ background: '#f9f9f9', padding: '15px 20px', borderRadius: 8, border: '1px solid #eee' }}>
+              <h3 style={{ margin: '0 0 15px', color: '#13795b', fontSize: 16 }}>ملخص الأرصدة المتأخرة حسب العملة:</h3>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 15 }}>
+                {currencies.map(curr => {
+                  const txs = transactions.filter(t => t.customerId === waCustomerForPdf.id && t.currencyId === curr.id);
+                  if (txs.length === 0) return null;
+                  const total = txs.reduce((sum, t) => sum + (t.type === 'debit' ? t.amount : -t.amount), 0);
+                  if (total === 0) return null;
+                  return (
+                    <div key={curr.id} style={{ display: 'flex', justifyContent: 'space-between', padding: 10, background: '#fff', borderRadius: 6, border: '1px solid #ddd', fontSize: 15 }}>
+                      <span style={{ color: '#555' }}>{curr.name}</span>
+                      <strong style={{ color: total > 0 ? '#c96850' : (total < 0 ? '#17825d' : '#333'), direction: 'ltr' }}>
+                        {formatMoney(total, curr)}
+                      </strong>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+            <div style={{ textAlign: 'center', marginTop: 40, fontSize: 12, color: '#999' }}>تم إصدار هذا الكشف آلياً بواسطة تطبيق جديعي سوفت</div>
+          </div>
+        </div>
+      )}
 
       {showAdd && (
         <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && setShowAdd(false)}>
