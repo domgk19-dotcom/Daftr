@@ -1,6 +1,6 @@
 {
-  "name": "",
-  "description": "",
+  "name": "جديعي سوفت",
+  "description": "نظام مالي مبسط",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

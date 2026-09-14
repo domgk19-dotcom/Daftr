@@ -77,6 +77,8 @@ export default function Home() {
   const [showSalesVoucher, setShowSalesVoucher] = useState(false);
   const [salesRows, setSalesRows] = useState<{ item: string; quantity: number; unit: string; amount: number }[]>([]);
   const [voucherDraft, setVoucherDraft] = useState({ item: "", quantity: "", unit: "", amount: "" });
+  const [itemFocused, setItemFocused] = useState(false);
+  const [unitFocused, setUnitFocused] = useState(false);
   const [selectedCurrencyId, setSelectedCurrencyId] = useState(1);
   const [transactionPeriod, setTransactionPeriod] = useState<"all" | "today" | "month" | "date">("all");
   const [selectedDate, setSelectedDate] = useState("");
@@ -323,12 +325,12 @@ export default function Home() {
   const shareDatabase = async () => {
     try {
       const bytes = await exportDatabase();
-      const fileName = `daftar-backup-${new Date().toISOString().replace(/[:.]/g, "-")}.sqlite`;
+      const fileName = `judaiei-soft-backup-${new Date().toISOString().replace(/[:.]/g, "-")}.sqlite`;
       if (Capacitor.isNativePlatform()) {
         await Filesystem.mkdir({ path: "mgk/Backups", directory: Directory.Documents, recursive: true }).catch(() => undefined);
         await Filesystem.writeFile({ path: `mgk/Backups/${fileName}`, data: bytesToBase64(bytes), directory: Directory.Documents, recursive: true });
         const uri = await Filesystem.getUri({ path: `mgk/Backups/${fileName}`, directory: Directory.Documents });
-        await Share.share({ title: "النسخة الاحتياطية", text: "نسخة دفتر حسابات", files: [uri.uri], dialogTitle: "مشاركة النسخة" });
+        await Share.share({ title: "النسخة الاحتياطية", text: "نسخة جديعي سوفت", files: [uri.uri], dialogTitle: "مشاركة النسخة" });
       } else {
         const file = new File([bytes], fileName, { type: "application/x-sqlite3" });
         if (navigator.share && navigator.canShare?.({ files: [file] })) await navigator.share({ title: "النسخة الاحتياطية", files: [file] });
@@ -619,8 +621,8 @@ export default function Home() {
       {menuOpen && <div className="sidebar-backdrop" onClick={() => setMenuOpen(false)} />}
       <aside className={`sidebar ${menuOpen ? "is-open" : ""}`}>
         <div className="brand">
-          <div className="brand-mark"><BookOpen size={22} /></div>
-          <div><strong>دفتر حسابات</strong><span>نظام مالي مبسط</span></div>
+          <div className="brand-mark"><img src="/icon.jpg" alt="Logo" style={{ width: 22, height: 22, borderRadius: 4 }} /></div>
+          <div><strong>جديعي سوفت</strong><span>نظام مالي مبسط</span></div>
           <button className="sidebar-close icon-button" onClick={() => setMenuOpen(false)}><X size={19} /></button>
         </div>
         <div className="workspace-switcher">
@@ -1293,6 +1295,10 @@ export default function Home() {
                     <span><b>3</b> احصل على المفتاح</span>
                     <span><b>4</b> أدخله في خانة التفعيل</span>
                   </div>
+                  <div className="developer-contact" style={{ marginTop: 24, padding: 16, background: 'rgba(23, 107, 88, 0.05)', borderRadius: 12, border: '1px dashed rgba(23, 107, 88, 0.3)', textAlign: 'center' }}>
+                    <h3 style={{ fontSize: 13, color: '#145746', marginBottom: 8, marginTop: 0 }}>للتواصل مع المطور (واتساب / اتصال)</h3>
+                    <div style={{ fontSize: 24, fontWeight: 'bold', color: '#176b58', direction: 'ltr', letterSpacing: '2px' }}>770680160</div>
+                  </div>
                 </div>
               </div>
             </section>
@@ -1351,7 +1357,7 @@ export default function Home() {
         </div>
 
         <footer className="footer">
-          <span>دفتر حسابات <b>v1.0</b> نظام مالي مجاني بدون إنترنت</span>
+          <span>جديعي سوفت <b>v1.0</b> نظام مالي مجاني بدون إنترنت</span>
           <span>جميع البيانات مخزنة محلياً في جهازك</span>
         </footer>
       </main>
@@ -1460,9 +1466,27 @@ export default function Home() {
               <span>أضف الأصناف المطلوبة.</span>
             </div>
             <div className="voucher-item-entry">
-              <input list="sales-items" placeholder="الصنف / البيان" value={voucherDraft.item} onChange={(event) => setVoucherDraft((draft) => ({ ...draft, item: event.target.value }))} />
+              <div className="autocomplete-wrapper">
+                <input placeholder="الصنف / البيان" value={voucherDraft.item} onFocus={() => setItemFocused(true)} onBlur={() => setTimeout(() => setItemFocused(false), 200)} onChange={(event) => setVoucherDraft((draft) => ({ ...draft, item: event.target.value }))} />
+                {itemFocused && catalogItems.filter(i => i.name.toLowerCase().includes(voucherDraft.item.toLowerCase())).length > 0 && (
+                  <div className="autocomplete-dropdown">
+                    {catalogItems.filter(i => i.name.toLowerCase().includes(voucherDraft.item.toLowerCase())).map(i => (
+                      <div key={i.id} onMouseDown={() => setVoucherDraft(d => ({ ...d, item: i.name }))}>{i.name}</div>
+                    ))}
+                  </div>
+                )}
+              </div>
               <input type="number" min="0.01" step="any" placeholder="الكمية" value={voucherDraft.quantity} onChange={(event) => setVoucherDraft((draft) => ({ ...draft, quantity: event.target.value }))} />
-              <input list="sales-units" placeholder="الوحدة" value={voucherDraft.unit} onChange={(event) => setVoucherDraft((draft) => ({ ...draft, unit: event.target.value }))} />
+              <div className="autocomplete-wrapper">
+                <input placeholder="الوحدة" value={voucherDraft.unit} onFocus={() => setUnitFocused(true)} onBlur={() => setTimeout(() => setUnitFocused(false), 200)} onChange={(event) => setVoucherDraft((draft) => ({ ...draft, unit: event.target.value }))} />
+                {unitFocused && catalogUnits.filter(u => u.name.toLowerCase().includes(voucherDraft.unit.toLowerCase())).length > 0 && (
+                  <div className="autocomplete-dropdown">
+                    {catalogUnits.filter(u => u.name.toLowerCase().includes(voucherDraft.unit.toLowerCase())).map(u => (
+                      <div key={u.id} onMouseDown={() => setVoucherDraft(d => ({ ...d, unit: u.name }))}>{u.name}</div>
+                    ))}
+                  </div>
+                )}
+              </div>
               <input type="number" min="0.01" step="any" placeholder="الإجمالي (لهذا الصنف)" value={voucherDraft.amount} onChange={(event) => setVoucherDraft((draft) => ({ ...draft, amount: event.target.value }))} />
               <button type="button" className="primary-button compact" onClick={insertVoucherRow}><Plus size={15} /> إدراج الصنف</button>
             </div>
@@ -1484,8 +1508,6 @@ export default function Home() {
                 </div>
               ))}
             </div>
-            <datalist id="sales-items">{catalogItems.map((item) => <option key={item.id} value={item.name} />)}</datalist>
-            <datalist id="sales-units">{catalogUnits.map((unit) => <option key={unit.id} value={unit.name} />)}</datalist>
             <div className="sales-total">
               <span>الإجمالي الكلي:</span>
               <strong>{salesRows.reduce((sum, row) => sum + Number(row.amount || 0), 0).toLocaleString("en-US")} {currencies.find((currency) => currency.id === selectedCurrencyId)?.symbol || ""}</strong>
