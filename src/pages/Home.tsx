@@ -7,6 +7,7 @@ import { Directory, Filesystem } from "@capacitor/filesystem";
 import { Share } from "@capacitor/share";
 import html2canvas from "html2canvas";
 import { jsPDF } from "jspdf";
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend } from "recharts";
 
 type Customer = DbCustomer;
 type Transaction = DbTransaction;
@@ -19,6 +20,7 @@ const navItems = [
   { id: "purchase-vouchers", label: "سندات المشتريات", icon: FileText },
   { id: "currencies", label: "العملات", icon: CircleDollarSign },
   { id: "reports", label: "التقارير", icon: FileBarChart },
+  { id: "analytics", label: "ذكاء الأعمال", icon: Sparkles },
 ];
 
 const formatMoney = (value: number, currency?: Pick<DbCurrency, "symbol" | "code">) => `${Math.abs(value).toLocaleString("en-US")} ${currency?.symbol || currency?.code || ""}`.trim();
@@ -164,6 +166,44 @@ export default function Home() {
   }, [overviewTransactions]);
 
   const chartMax = Math.max(1, ...monthlyChart.flatMap((item) => [item.income, item.expense]));
+
+  const analyticsData = useMemo(() => {
+    const targetCurrency = selectedCurrencyId || currencies[0]?.id || 1;
+    const currencyInfo = currencies.find(c => c.id === targetCurrency);
+    const relevantTxs = transactions.filter(t => t.currencyId === targetCurrency);
+    
+    // Group by month for the last 6 months
+    const now = new Date();
+    const months = Array.from({ length: 6 }, (_, i) => {
+      const d = new Date(now.getFullYear(), now.getMonth() - (5 - i), 1);
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+    });
+
+    const flowData = months.map(month => {
+      const monthTxs = relevantTxs.filter(t => t.date.startsWith(month));
+      const income = monthTxs.filter(t => t.type === "قبض").reduce((sum, t) => sum + t.amount, 0);
+      const expense = monthTxs.filter(t => t.type === "صرف").reduce((sum, t) => sum + t.amount, 0);
+      return { 
+        date: new Intl.DateTimeFormat("ar-IQ", { month: "short" }).format(new Date(`${month}-01`)), 
+        income, 
+        expense, 
+        label: month 
+      };
+    });
+
+    const incomeTotal = relevantTxs.filter(t => t.type === "قبض").reduce((sum, t) => sum + t.amount, 0);
+    const expenseTotal = relevantTxs.filter(t => t.type === "صرف").reduce((sum, t) => sum + t.amount, 0);
+
+    // Summary for all currencies
+    const summaries = currencies.map(currency => {
+      const currTxs = transactions.filter(t => t.currencyId === currency.id);
+      const totalIn = currTxs.filter(t => t.type === "قبض").reduce((sum, t) => sum + t.amount, 0);
+      const totalOut = currTxs.filter(t => t.type === "صرف").reduce((sum, t) => sum + t.amount, 0);
+      return { currency, totalIn, totalOut, net: totalIn - totalOut };
+    });
+
+    return { flowData, currency: currencyInfo, incomeTotal, expenseTotal, summaries };
+  }, [transactions, selectedCurrencyId, currencies]);
 
   const saveShop = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -576,6 +616,7 @@ export default function Home() {
         </div>
       )}
 
+      {menuOpen && <div className="sidebar-backdrop" onClick={() => setMenuOpen(false)} />}
       <aside className={`sidebar ${menuOpen ? "is-open" : ""}`}>
         <div className="brand">
           <div className="brand-mark"><BookOpen size={22} /></div>
@@ -670,7 +711,7 @@ export default function Home() {
                     <button onClick={() => setShowAdd(true)}><span className="quick-icon green"><UserRound size={19} /></span><b>عميل جديد</b><small>إضافة سجل عميل</small><ChevronLeft size={16} /></button>
                     <button onClick={() => setShowTransaction(true)}><span className="quick-icon blue"><ArrowDownLeft size={19} /></span><b>سند قبض/صرف</b><small>تسجيل حركة مالية</small><ChevronLeft size={16} /></button>
                     <button onClick={() => handleNav("reports")}><span className="quick-icon orange"><FileText size={19} /></span><b>التقارير</b><small>استخراج الكشوفات</small><ChevronLeft size={16} /></button>
-                    <button onClick={() => setToast("غير متوفر بعد")}><span className="quick-icon purple"><Sparkles size={19} /></span><b>ذكاء الأعمال</b><small>تحليلات مالية متقدمة</small><ChevronLeft size={16} /></button>
+                    <button onClick={() => handleNav("analytics")}><span className="quick-icon purple"><Sparkles size={19} /></span><b>ذكاء الأعمال</b><small>تحليلات مالية متقدمة</small><ChevronLeft size={16} /></button>
                   </div>
                 </div>
               </section>
@@ -1055,6 +1096,63 @@ export default function Home() {
                   <p>الرجاء اختيار عميل وتحديد فترات التقرير ثم النقر على عرض.</p>
                 </div>
               )}
+            </section>
+          )}
+
+          {activeView === "analytics" && (
+            <section className="inner-view analytics-page">
+              <div className="view-heading">
+                <div><div className="eyebrow"><Sparkles size={15} /> التحليلات المالية</div><h1>ذكاء الأعمال</h1><p>رؤى وتحليلات متقدمة للأداء المالي الخاص بك.</p></div>
+                <select value={selectedCurrencyId} onChange={(event) => setSelectedCurrencyId(Number(event.target.value))}>
+                  {currencies.map(currency => <option key={currency.id} value={currency.id}>{currency.name} ({currency.code})</option>)}
+                </select>
+              </div>
+
+              <div className="stats-grid" style={{ marginBottom: 20 }}>
+                <StatCard label="إجمالي المقبوضات" value={analyticsData.incomeTotal.toLocaleString("en-US")} hint={`بعملة ${analyticsData.currency?.symbol}`} icon={TrendingUp} accent="green" />
+                <StatCard label="إجمالي المنصرفات" value={analyticsData.expenseTotal.toLocaleString("en-US")} hint={`بعملة ${analyticsData.currency?.symbol}`} icon={ArrowDownLeft} accent="orange" />
+              </div>
+
+              <div className="card" style={{ marginBottom: 20 }}>
+                <div className="card-heading">
+                  <div><h2>إجمالي الحركة لكل العملات</h2><p>ملخص شامل لجميع التصنيفات</p></div>
+                </div>
+                <div className="table-wrap">
+                  <table>
+                    <thead><tr><th>العملة</th><th>إجمالي الوارد (مقبوضات)</th><th>إجمالي المنصرف (صرف)</th><th>الرصيد الصافي</th><th>الحالة</th></tr></thead>
+                    <tbody>
+                      {analyticsData.summaries.map((summary) => (
+                        <tr key={summary.currency.id}>
+                          <td><b>{summary.currency.name} ({summary.currency.code})</b></td>
+                          <td className="in-text">{summary.totalIn.toLocaleString("en-US")} {summary.currency.symbol}</td>
+                          <td className="out-text">{summary.totalOut.toLocaleString("en-US")} {summary.currency.symbol}</td>
+                          <td>{Math.abs(summary.net).toLocaleString("en-US")} {summary.currency.symbol}</td>
+                          <td className={summary.net >= 0 ? "credit" : "debit"}>{summary.net >= 0 ? "له" : "عليه"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              <div className="card">
+                <div className="card-heading">
+                  <div><h2>التدفق النقدي للـ 6 أشهر الأخيرة</h2><p>تحليل حركة المقبوضات والمنصرفات</p></div>
+                </div>
+                <div style={{ height: 320, width: "100%", marginTop: 20 }}>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={analyticsData.flowData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                      <XAxis dataKey="date" axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: "#64748b" }} />
+                      <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: "#64748b" }} tickFormatter={(val) => val.toLocaleString("en-US")} />
+                      <Tooltip contentStyle={{ borderRadius: 12, border: "none", boxShadow: "0 10px 25px rgba(0,0,0,0.1)", fontSize: 13 }} itemStyle={{ padding: 4 }} />
+                      <Legend iconType="circle" wrapperStyle={{ fontSize: 12, paddingTop: 10 }} />
+                      <Bar name="مقبوضات" dataKey="income" fill="#10b981" radius={[4, 4, 0, 0]} maxBarSize={40} />
+                      <Bar name="منصرفات" dataKey="expense" fill="#f59e0b" radius={[4, 4, 0, 0]} maxBarSize={40} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
             </section>
           )}
 
