@@ -41,6 +41,10 @@ jobs:
         run: |
           npx cap add android
           npx cap sync android
+      - name: Generate Icons and Splash Screens
+        run: |
+          npm install -D @capacitor/assets
+          npx @capacitor/assets generate --assetPath assets --iconBackgroundColor '#ffffff' --splashBackgroundColor '#ffffff'
 
       - name: Add Storage Permissions to AndroidManifest
         run: |

@@ -1363,7 +1363,11 @@ export default function Home() {
       </main>
 
       <nav className="mobile-nav">
-        {navItems.slice(0, 4).map(({ id, label, icon: Icon }) => (
+        {[...navItems, 
+          { id: "backup", label: "النسخ", icon: Download },
+          { id: "settings", label: "الإعدادات", icon: Settings },
+          { id: "license", label: "الترخيص", icon: ShieldCheck }
+        ].map(({ id, label, icon: Icon }) => (
           <button key={id} className={activeView === id ? "active" : ""} onClick={() => handleNav(id)}>
             <Icon size={19} /><span>{label}</span>
           </button>

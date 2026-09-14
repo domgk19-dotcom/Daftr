@@ -1,8 +1,8 @@
 import type { CapacitorConfig } from '@capacitor/cli';
 
 const config: CapacitorConfig = {
-  appId: 'com.daftar.hisabat',
-  appName: 'دفتر حسابات',
+  appId: 'com.judaiei.soft',
+  appName: 'جديعي سوفت',
   webDir: 'dist'
 };
 
