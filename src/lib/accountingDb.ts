@@ -23,6 +23,8 @@ export type DbTransaction = {
   date: string;
   currencyId: number;
   currencyCode: string;
+  handover: string;
+  voucherType: string;
 };
 
 export type DbCurrency = { id: number; name: string; code: string; symbol: string; decimals: number; transactionCount: number };
@@ -89,7 +91,9 @@ function rowToTransaction(row: any[]): DbTransaction {
     type: String(row[4]) as "قبض" | "صرف",
     amount: Number(row[5]),
     note: String(row[6]),
-    date: String(row[7])
+    date: String(row[7]),
+    handover: String(row[8] || ""),
+    voucherType: String(row[9] || "")
   };
 }
 
@@ -194,7 +198,7 @@ export async function persistDb() {
 export async function readAccountingData() {
   const db = await getDb();
   const customerRows = db.exec(`SELECT c.id, c.name, c.phone, c.group_name, c.opening_balance + COALESCE(SUM(CASE WHEN t.type='صرف' THEN t.amount WHEN t.type='قبض' THEN -t.amount ELSE 0 END), 0) AS balance, c.initials, c.tone, COALESCE(MAX(t.transaction_date), c.last_activity), COUNT(t.id) FROM customers c LEFT JOIN transactions t ON t.customer_id=c.id GROUP BY c.id ORDER BY c.id DESC`)[0]?.values || [];
-  const transactionRows = db.exec("SELECT t.id, c.name, t.currency_id, cur.code, t.type, t.amount, t.note, t.transaction_date FROM transactions t JOIN customers c ON c.id=t.customer_id JOIN currencies cur ON cur.id=t.currency_id ORDER BY t.id DESC")[0]?.values || [];
+  const transactionRows = db.exec("SELECT t.id, c.name, t.currency_id, cur.code, t.type, t.amount, t.note, t.transaction_date, t.handover, t.voucher_type FROM transactions t JOIN customers c ON c.id=t.customer_id JOIN currencies cur ON cur.id=t.currency_id ORDER BY t.id DESC")[0]?.values || [];
   const currencyRows = db.exec("SELECT cur.id, cur.name, cur.code, cur.symbol, cur.decimals, COUNT(t.id) FROM currencies cur LEFT JOIN transactions t ON t.currency_id=cur.id GROUP BY cur.id ORDER BY cur.id")[0]?.values || [];
   const itemRows = db.exec("SELECT id, name FROM catalog_items ORDER BY name COLLATE NOCASE")[0]?.values || [];
   const unitRows = db.exec("SELECT id, name FROM catalog_units ORDER BY name COLLATE NOCASE")[0]?.values || [];
@@ -217,13 +221,13 @@ export async function insertCustomer(input: { name: string; phone: string; group
   return readAccountingData();
 }
 
-export async function insertTransaction(input: { customerName: string; currencyId: number; type: "قبض" | "صرف"; amount: number; note: string; date: string }) {
+export async function insertTransaction(input: { customerName: string; currencyId: number; type: "قبض" | "صرف"; amount: number; note: string; date: string; handover: string }) {
   const db = await getDb();
   const customer = db.exec("SELECT id FROM customers WHERE name = ?", [input.customerName])[0]?.values[0];
   if (!customer) throw new Error("العميل غير موجود");
   const id = Date.now();
   const statement = db.prepare("INSERT INTO transactions (id, customer_id, currency_id, type, amount, note, transaction_date, voucher_type, handover) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
-  statement.run([id, customer[0], input.currencyId || 1, input.type, input.amount, input.note || "بدون تفاصيل", input.date || new Date().toISOString().slice(0, 10), "", ""]);
+  statement.run([id, customer[0], input.currencyId || 1, input.type, input.amount, input.note || "بدون تفاصيل", input.date || new Date().toISOString().slice(0, 10), "", input.handover || ""]);
   statement.free();
   await persistDb();
   return readAccountingData();
@@ -294,10 +298,10 @@ export async function deleteCustomer(id: number) {
   return readAccountingData();
 }
 
-export async function updateTransaction(id: number, input: { currencyId: number; type: "قبض" | "صرف"; amount: number; note: string; date: string }) {
+export async function updateTransaction(id: number, input: { currencyId: number; type: "قبض" | "صرف"; amount: number; note: string; date: string; handover: string }) {
   const db = await getDb();
-  const statement = db.prepare("UPDATE transactions SET currency_id = ?, type = ?, amount = ?, note = ?, transaction_date = ? WHERE id = ?");
-  statement.run([input.currencyId || 1, input.type, input.amount, input.note, input.date, id]);
+  const statement = db.prepare("UPDATE transactions SET currency_id = ?, type = ?, amount = ?, note = ?, transaction_date = ?, handover = ? WHERE id = ?");
+  statement.run([input.currencyId || 1, input.type, input.amount, input.note, input.date, input.handover || "", id]);
   statement.free();
   await persistDb();
   return readAccountingData();

@@ -21,7 +21,7 @@ const navItems = [
   { id: "reports", label: "التقارير", icon: FileBarChart },
 ];
 
-const formatMoney = (value: number, currency?: Pick<DbCurrency, "symbol" | "code">) => `${Math.abs(value).toLocaleString("ar-IQ")} ${currency?.symbol || currency?.code || ""}`.trim();
+const formatMoney = (value: number, currency?: Pick<DbCurrency, "symbol" | "code">) => `${Math.abs(value).toLocaleString("en-US")} ${currency?.symbol || currency?.code || ""}`.trim();
 
 const transactionDateKey = (value: string) => {
   if (value.includes("اليوم")) return new Date().toISOString().slice(0, 10);
@@ -217,16 +217,22 @@ export default function Home() {
     let clone: HTMLElement | null = null;
     try {
       setToast(action === 'share' ? "جاري تجهيز التقرير للمشاركة..." : "جاري حفظ التقرير...");
-      clone = reportRef.current.cloneNode(true) as HTMLElement;
-      clone.querySelectorAll(".report-controls,.report-actions,.account-global-report,.legacy-report").forEach((node) => node.remove());
+      const docElement = reportRef.current.querySelector(".report-document");
+      if (!docElement) throw new Error("التقرير غير موجود");
+      
+      clone = docElement.cloneNode(true) as HTMLElement;
+      clone.classList.add("pdf-export-mode");
+      clone.style.display = "block";
       clone.style.width = "794px";
       clone.style.maxWidth = "794px";
       clone.style.background = "#ffffff";
-      clone.style.padding = "24px";
+      clone.style.padding = "40px";
+      clone.style.margin = "0";
       clone.style.position = "absolute";
       clone.style.left = "-10000px";
       clone.style.top = "0";
       document.body.appendChild(clone);
+      
       const canvas = await html2canvas(clone, { scale: 2, useCORS: true, backgroundColor: "#ffffff" });
       const pdf = new jsPDF({ orientation: "p", unit: "mm", format: "a4" });
       const pageWidth = 190;
@@ -244,13 +250,13 @@ export default function Home() {
       const fileName = `تقرير-${new Date().toISOString().slice(0, 10)}.pdf`;
       
       if (Capacitor.isNativePlatform()) {
-        await Filesystem.mkdir({ path: "mgk", directory: Directory.Documents, recursive: true }).catch(() => undefined);
-        const uri = await Filesystem.writeFile({ path: `mgk/${fileName}`, data: pdf.output("datauristring").split(",")[1], directory: Directory.Documents, recursive: true });
+        await Filesystem.mkdir({ path: "mgk/PDF", directory: Directory.Documents, recursive: true }).catch(() => undefined);
+        const uri = await Filesystem.writeFile({ path: `mgk/PDF/${fileName}`, data: pdf.output("datauristring").split(",")[1], directory: Directory.Documents, recursive: true });
         
         if (action === 'share') {
-          await Share.share({ title: "تقرير حساب", url: uri.uri, dialogTitle: "مشاركة التقرير" });
+          await Share.share({ title: "تقرير حساب", files: [uri.uri], dialogTitle: "مشاركة التقرير" });
         } else {
-          setToast("تم حفظ التقرير في مجلد Documents/mgk");
+          setToast("تم حفظ التقرير في مجلد Documents/mgk/PDF");
         }
       } else {
         if (action === 'share') {
@@ -279,10 +285,10 @@ export default function Home() {
       const bytes = await exportDatabase();
       const fileName = `daftar-backup-${new Date().toISOString().replace(/[:.]/g, "-")}.sqlite`;
       if (Capacitor.isNativePlatform()) {
-        await Filesystem.mkdir({ path: "mgk", directory: Directory.Documents, recursive: true }).catch(() => undefined);
-        await Filesystem.writeFile({ path: `mgk/${fileName}`, data: bytesToBase64(bytes), directory: Directory.Documents, recursive: true });
-        const uri = await Filesystem.getUri({ path: `mgk/${fileName}`, directory: Directory.Documents });
-        await Share.share({ title: "النسخة الاحتياطية", text: "نسخة دفتر حسابات", url: uri.uri, dialogTitle: "مشاركة النسخة" });
+        await Filesystem.mkdir({ path: "mgk/Backups", directory: Directory.Documents, recursive: true }).catch(() => undefined);
+        await Filesystem.writeFile({ path: `mgk/Backups/${fileName}`, data: bytesToBase64(bytes), directory: Directory.Documents, recursive: true });
+        const uri = await Filesystem.getUri({ path: `mgk/Backups/${fileName}`, directory: Directory.Documents });
+        await Share.share({ title: "النسخة الاحتياطية", text: "نسخة دفتر حسابات", files: [uri.uri], dialogTitle: "مشاركة النسخة" });
       } else {
         const file = new File([bytes], fileName, { type: "application/x-sqlite3" });
         if (navigator.share && navigator.canShare?.({ files: [file] })) await navigator.share({ title: "النسخة الاحتياطية", files: [file] });
@@ -323,7 +329,7 @@ export default function Home() {
     const type = String(data.get("type") || "قبض") as "قبض" | "صرف";
     const handover = String(data.get("handover") || "").trim();
     if (!customerName || !amount) return;
-    insertTransaction({ customerName, currencyId: Number(data.get("currency") || 1), type, amount, note: `${String(data.get("note") || "")}${handover ? `\nالمستلم/المسلم: ${handover}` : ""}`, date: String(data.get("date") || new Date().toISOString().slice(0, 10)) }).then(({ customers: loadedCustomers, transactions: loadedTransactions, currencies: loadedCurrencies }) => {
+    insertTransaction({ customerName, currencyId: Number(data.get("currency") || 1), type, amount, note: String(data.get("note") || ""), date: String(data.get("date") || new Date().toISOString().slice(0, 10)), handover }).then(({ customers: loadedCustomers, transactions: loadedTransactions, currencies: loadedCurrencies }) => {
       setCustomers(loadedCustomers);
       setTransactions(loadedTransactions);
       setCurrencies(loadedCurrencies);
@@ -365,7 +371,7 @@ export default function Home() {
     event.preventDefault();
     if (!editingTransaction) return;
     const form = new FormData(event.currentTarget);
-    updateTransaction(editingTransaction.id, { currencyId: Number(form.get("currency") || 1), date: String(form.get("date") || editingTransaction.date), type: String(form.get("type")) as "قبض" | "صرف", amount: Number(form.get("amount") || 0), note: String(form.get("note") || "") }).then((data) => {
+    updateTransaction(editingTransaction.id, { currencyId: Number(form.get("currency") || 1), date: String(form.get("date") || editingTransaction.date), type: String(form.get("type")) as "قبض" | "صرف", amount: Number(form.get("amount") || 0), note: String(form.get("note") || ""), handover: String(form.get("handover") || "") }).then((data) => {
       refreshData(data, "تم التعديل");
       setEditingTransaction(null);
     }).catch((error: Error) => setToast(error.message));
@@ -460,12 +466,12 @@ export default function Home() {
     const stamp = new Date().toISOString().replace(/[:.]/g, "-");
     const fileName = `daftar-backup-${stamp}.sqlite`;
     if (Capacitor.isNativePlatform()) {
-      await Filesystem.mkdir({ path: "mgk", directory: Directory.Documents, recursive: true }).catch(() => undefined);
-      await Filesystem.writeFile({ path: `mgk/${fileName}`, data: bytesToBase64(bytes), directory: Directory.Documents, recursive: true });
-      const listing = await Filesystem.readdir({ path: "mgk", directory: Directory.Documents });
+      await Filesystem.mkdir({ path: "mgk/Backups", directory: Directory.Documents, recursive: true }).catch(() => undefined);
+      await Filesystem.writeFile({ path: `mgk/Backups/${fileName}`, data: bytesToBase64(bytes), directory: Directory.Documents, recursive: true });
+      const listing = await Filesystem.readdir({ path: "mgk/Backups", directory: Directory.Documents });
       const backups = listing.files.filter((file) => file.name.endsWith(".sqlite")).sort((a, b) => b.name.localeCompare(a.name));
-      for (const oldFile of backups.slice(3)) await Filesystem.deleteFile({ path: `mgk/${oldFile.name}`, directory: Directory.Documents });
-      if (notify) setToast("تم حفظ النسخة في Documents/mgk");
+      for (const oldFile of backups.slice(3)) await Filesystem.deleteFile({ path: `mgk/Backups/${oldFile.name}`, directory: Directory.Documents });
+      if (notify) setToast("تم حفظ النسخة في Documents/mgk/Backups");
       return;
     }
     const file = await directory.getFileHandle(fileName, { create: true });
@@ -482,10 +488,10 @@ export default function Home() {
   const chooseBackupFolder = async () => {
     if (Capacitor.isNativePlatform()) {
       try {
-        await Filesystem.mkdir({ path: "mgk", directory: Directory.Documents, recursive: true }).catch(() => undefined);
+        await Filesystem.mkdir({ path: "mgk/Backups", directory: Directory.Documents, recursive: true }).catch(() => undefined);
         setBackupDirectory({ native: true });
-        setBackupFolder("Documents/mgk");
-        localStorage.setItem("daftar-backup-folder", "Documents/mgk");
+        setBackupFolder("Documents/mgk/Backups");
+        localStorage.setItem("daftar-backup-folder", "Documents/mgk/Backups");
         await writeBackupToDirectory({ native: true });
       } catch {
         setToast("تعذر الوصول لمجلد المستندات");
@@ -551,7 +557,7 @@ export default function Home() {
   const title = activeView === "overview" ? "الرئيسية" : activeView === "transactions" ? `العمليات - ${currencies.find((currency) => currency.id === selectedCurrencyId)?.name || "العملة"}` : activeView === "license" ? "الترخيص" : navItems.find((item) => item.id === activeView)?.label || (activeView === "backup" ? "النسخ الاحتياطي" : "الإعدادات");
 
   return (
-    <div className="app-shell" dir="rtl">
+    <div className={`app-shell ${activeView === "overview" ? "overview-active" : ""}`} dir="rtl">
       {!databaseReady && <div className="db-loading"><span className="loading-spinner" /> جاري التحميل...</div>}
       {licenseInfo.isExpired && activeView !== "license" && (
         <div className="license-lock-screen">
@@ -585,7 +591,7 @@ export default function Home() {
           {navItems.map(({ id, label, icon: Icon }) => (
             <button key={id} className={`nav-item ${activeView === id ? "active" : ""}`} onClick={() => handleNav(id)}>
               <Icon size={19} /><span>{label}</span>
-              {id === "accounts" && <em>{customers.length.toLocaleString("ar-IQ")}</em>}
+              {id === "accounts" && <em>{customers.length.toLocaleString("en-US")}</em>}
             </button>
           ))}
           <p className="nav-label nav-label-spaced">النظام</p>
@@ -627,8 +633,8 @@ export default function Home() {
               <section className="stats-grid">
                 <StatCard label="إجمالي ديون لي" value={formatMoney(totals.receivables, overviewCurrency)} hint="إجمالي المبالغ المستحقة لك" icon={WalletCards} accent="green" />
                 <StatCard label="إجمالي ديون علي" value={formatMoney(totals.payables, overviewCurrency)} hint="إجمالي المبالغ المستحقة عليك" icon={CircleDollarSign} accent="blue" />
-                <StatCard label="عمليات هذا الشهر" value={totals.monthTransactions.toLocaleString("ar-IQ")} hint={`بعملة ${overviewCurrency?.symbol || overviewCurrency?.code || ""}`} icon={TrendingUp} accent="orange" />
-                <StatCard label="إجمالي العملاء" value={totals.customers.toLocaleString("ar-IQ")} hint="مسجلين في النظام" icon={UsersRound} accent="purple" />
+                <StatCard label="عمليات هذا الشهر" value={totals.monthTransactions.toLocaleString("en-US")} hint={`بعملة ${overviewCurrency?.symbol || overviewCurrency?.code || ""}`} icon={TrendingUp} accent="orange" />
+                <StatCard label="إجمالي العملاء" value={totals.customers.toLocaleString("en-US")} hint="مسجلين في النظام" icon={UsersRound} accent="purple" />
               </section>
               <section className="content-grid">
                 <div className="card balance-chart-card">
@@ -801,13 +807,14 @@ export default function Home() {
                 </div>
                 <div className="table-wrap">
                   <table>
-                    <thead><tr><th>العميل</th><th>النوع</th><th>البيان</th><th>التاريخ</th><th>المبلغ</th><th>إجراءات</th></tr></thead>
+                    <thead><tr><th>العميل</th><th>نوع السند</th><th>البيان</th><th>مناولة</th><th>التاريخ</th><th>المبلغ</th><th>إجراءات</th></tr></thead>
                     <tbody>
                       {visibleTransactions.filter((transaction) => `${transaction.customer} ${transaction.note}`.toLowerCase().includes(query.toLowerCase())).map((transaction) => (
                         <tr key={transaction.id}>
                           <td><b>{transaction.customer}</b></td>
-                          <td><span className={`type-pill ${transaction.type === "قبض" ? "type-in" : "type-out"}`}>{transaction.type === "قبض" ? <ArrowDownLeft size={14} /> : <ArrowUpLeft size={14} />}{transaction.type}</span></td>
+                          <td><span className={`type-pill ${transaction.type === "قبض" ? "type-in" : "type-out"}`}>{transaction.type === "قبض" ? <ArrowDownLeft size={14} /> : <ArrowUpLeft size={14} />}{transaction.voucherType || (transaction.type === "قبض" ? "سند قبض" : "سند صرف")}</span></td>
                           <td>{transaction.note}<small className="currency-badge">{transaction.currencyCode}</small></td>
+                          <td>{transaction.handover || "-"}</td>
                           <td>{transaction.date}</td>
                           <td className={transaction.type === "قبض" ? "in-text" : "out-text"}>{transaction.type === "قبض" ? "+" : "-"}{formatMoney(transaction.amount, currencyFor(transaction.currencyId))}</td>
                           <td>
@@ -907,25 +914,36 @@ export default function Home() {
                     <section className="report-document-currency" key={currency.id}>
                       <div className="report-document-currency-head">
                         <h2>{currency.name} ({currency.code})</h2>
-                        <strong>الرصيد: {Math.abs(totalIn - totalOut).toLocaleString("ar-YE")} {currency.symbol} - {totalIn >= totalOut ? "له (دائن)" : "عليه (مدين)"}</strong>
+                        <strong>الرصيد: {Math.abs(totalIn - totalOut).toLocaleString("en-US")} {currency.symbol} - {totalIn >= totalOut ? "له (دائن)" : "عليه (مدين)"}</strong>
                       </div>
                       <table>
                         <thead>
-                          <tr><th>التاريخ</th><th>البيان والملاحظات</th><th>الاسم</th><th>النوع</th><th>المبلغ</th></tr>
+                          <tr><th>التاريخ</th><th>نوع السند</th><th style={{ width: "35%" }}>البيان والملاحظات</th><th>مناولة</th><th>مدين (عليه)</th><th>دائن (له)</th></tr>
                         </thead>
                         <tbody>
                           {rows.length ? rows.map((transaction) => (
                             <tr key={transaction.id}>
-                              <td>{transaction.date}</td>
-                              <td className="report-note-cell">{transaction.note}</td>
-                              <td>{reportCustomer?.name}</td>
-                              <td>{transaction.type}</td>
-                              <td>{transaction.type === "قبض" ? "+" : " "}{transaction.amount.toLocaleString("ar-YE")} {currency.symbol}</td>
+                              <td style={{ whiteSpace: "nowrap" }}>{transaction.date}</td>
+                              <td style={{ whiteSpace: "nowrap", fontSize: "10px", fontWeight: "bold", color: "#405259" }}>{transaction.voucherType || (transaction.type === "قبض" ? "سند قبض" : "سند صرف")}</td>
+                              <td className="report-note-cell" style={{ fontSize: "11px" }}>{transaction.note}</td>
+                              <td>{transaction.handover || "-"}</td>
+                              <td className="report-amount-cell" style={{ color: transaction.type === "صرف" ? "#db8240" : "inherit" }}>{transaction.type === "صرف" ? transaction.amount.toLocaleString("en-US") : "-"}</td>
+                              <td className="report-amount-cell" style={{ color: transaction.type === "قبض" ? "#17845e" : "inherit" }}>{transaction.type === "قبض" ? transaction.amount.toLocaleString("en-US") : "-"}</td>
                             </tr>
-                          )) : <tr><td colSpan={5}>لا توجد حركات بهذه العملة في الفترة المحددة</td></tr>}
+                          )) : <tr><td colSpan={6}>لا توجد حركات بهذه العملة في الفترة المحددة</td></tr>}
                         </tbody>
                         <tfoot>
-                          <tr><th colSpan={4}>الإجمالي (مقبوضات: {totalIn.toLocaleString("ar-YE")} | منصرفات: {totalOut.toLocaleString("ar-YE")})</th><th>{(totalIn - totalOut).toLocaleString("ar-YE")} {currency.symbol}</th></tr>
+                          <tr>
+                            <th colSpan={4}>الإجمالي:</th>
+                            <th style={{ color: "#db8240" }}>{totalOut.toLocaleString("en-US")} {currency.symbol}</th>
+                            <th style={{ color: "#17845e" }}>{totalIn.toLocaleString("en-US")} {currency.symbol}</th>
+                          </tr>
+                          <tr style={{ background: "#e9f3ef" }}>
+                            <th colSpan={4}>الرصيد النهائي:</th>
+                            <th colSpan={2} style={{ textAlign: "center", fontSize: "14px" }}>
+                              {Math.abs(totalIn - totalOut).toLocaleString("en-US")} {currency.symbol} - {totalIn >= totalOut ? "له (دائن)" : "عليه (مدين)"}
+                            </th>
+                          </tr>
                         </tfoot>
                       </table>
                     </section>
@@ -937,9 +955,9 @@ export default function Home() {
                       {reportRowsByCurrency.map(({ currency, totalIn, totalOut }) => (
                         <tr key={currency.id}>
                           <td><b>{currency.name} ({currency.code})</b></td>
-                          <td className="in-text">{totalIn.toLocaleString("ar-YE")} {currency.symbol}</td>
-                          <td className="out-text">{totalOut.toLocaleString("ar-YE")} {currency.symbol}</td>
-                          <td>{Math.abs(totalIn - totalOut).toLocaleString("ar-YE")} {currency.symbol}</td>
+                          <td className="in-text">{totalIn.toLocaleString("en-US")} {currency.symbol}</td>
+                          <td className="out-text">{totalOut.toLocaleString("en-US")} {currency.symbol}</td>
+                          <td>{Math.abs(totalIn - totalOut).toLocaleString("en-US")} {currency.symbol}</td>
                           <td className={totalIn >= totalOut ? "credit" : "debit"}>{totalIn >= totalOut ? "له (دائن)" : "عليه (مدين)"}</td>
                         </tr>
                       ))}
@@ -947,7 +965,7 @@ export default function Home() {
                   </table>
                 )}
                 <footer className="report-document-footer">
-                  <span>إجمالي الحركات: {reportTransactions.length.toLocaleString("ar-YE")}</span>
+                  <span>إجمالي الحركات: {reportTransactions.length.toLocaleString("en-US")}</span>
                   <span>تاريخ الطباعة: {new Date().toLocaleDateString("ar-YE")}</span>
                 </footer>
               </div>
@@ -955,7 +973,7 @@ export default function Home() {
               <div style={{ display: reportRequested ? undefined : "none" }} className="card currency-totals-report account-global-report legacy-report">
                 <div className="card-heading">
                   <div><div className="eyebrow"><CircleDollarSign size={15} /> إجمالي الحساب</div><h2>أرصدة كل العملات</h2><p>ملخص الرصيد لكل عملة على حدة.</p></div>
-                  <strong>{globalReportTransactions.length.toLocaleString("ar-IQ")} حركة</strong>
+                  <strong>{globalReportTransactions.length.toLocaleString("en-US")} حركة</strong>
                 </div>
                 <div className="table-wrap">
                   <table>
@@ -964,9 +982,9 @@ export default function Home() {
                       {globalCurrencyTotals.map(({ currency, credit, debit, net }) => (
                         <tr key={currency.id}>
                           <td><span className="currency-line"><b className="currency-symbol small">{currency.symbol}</b><strong>{currency.name} ({currency.code})</strong></span></td>
-                          <td className="in-text">{credit.toLocaleString("ar-IQ")} {currency.symbol}</td>
-                          <td className="out-text">{debit.toLocaleString("ar-IQ")} {currency.symbol}</td>
-                          <td className={net >= 0 ? "credit" : "debit"}>{Math.abs(net).toLocaleString("ar-IQ")} {currency.symbol}</td>
+                          <td className="in-text">{credit.toLocaleString("en-US")} {currency.symbol}</td>
+                          <td className="out-text">{debit.toLocaleString("en-US")} {currency.symbol}</td>
+                          <td className={net >= 0 ? "credit" : "debit"}>{Math.abs(net).toLocaleString("en-US")} {currency.symbol}</td>
                           <td><span className={`status-pill ${net >= 0 ? "status-credit" : "status-debit"}`}><i />{net >= 0 ? "متزن/له" : "عليه"}</span></td>
                         </tr>
                       ))}
@@ -980,7 +998,7 @@ export default function Home() {
                   <div className="report-customer-banner">
                     <Avatar customer={reportCustomer} size="md" />
                     <div><b>{reportCustomer.name}</b><span>{reportCustomer.phone} • {reportCustomer.group}</span></div>
-                    <strong>{reportTransactions.length.toLocaleString("ar-IQ")} حركة</strong>
+                    <strong>{reportTransactions.length.toLocaleString("en-US")} حركة</strong>
                   </div>
                   {reportMode === "detail" ? (
                     <div className="report-tables">
@@ -988,22 +1006,24 @@ export default function Home() {
                         <div className="card report-currency-table" key={currency.id}>
                           <div className="card-heading">
                             <div><h2>{currency.name} ({currency.code})</h2><p>العمليات بهذه العملة</p></div>
-                            <strong className={totalIn - totalOut >= 0 ? "credit" : "debit"}>{totalIn >= totalOut ? "له" : "عليه"} {Math.abs(totalIn - totalOut).toLocaleString("ar-IQ")} {currency.symbol}</strong>
+                            <strong className={totalIn - totalOut >= 0 ? "credit" : "debit"}>{totalIn >= totalOut ? "له" : "عليه"} {Math.abs(totalIn - totalOut).toLocaleString("en-US")} {currency.symbol}</strong>
                           </div>
                           <div className="table-wrap">
                             <table>
-                              <thead><tr><th>التاريخ</th><th>البيان</th><th>النوع</th><th>المبلغ</th></tr></thead>
+                              <thead><tr><th>التاريخ</th><th>نوع السند</th><th>البيان</th><th>مناولة</th><th>مدين (عليه)</th><th>دائن (له)</th></tr></thead>
                               <tbody>
                                 {rows.length ? rows.map((transaction) => (
                                   <tr key={transaction.id}>
-                                    <td>{transaction.date}</td>
+                                    <td style={{ whiteSpace: "nowrap" }}>{transaction.date}</td>
+                                    <td style={{ whiteSpace: "nowrap" }}>{transaction.voucherType || (transaction.type === "قبض" ? "سند قبض" : "سند صرف")}</td>
                                     <td>{transaction.note}</td>
-                                    <td>{transaction.type}</td>
-                                    <td className={transaction.type === "قبض" ? "in-text" : "out-text"}>{transaction.type === "قبض" ? "+" : "-"}{transaction.amount.toLocaleString("ar-IQ")} {currency.symbol}</td>
+                                    <td>{transaction.handover || "-"}</td>
+                                    <td className="out-text">{transaction.type === "صرف" ? transaction.amount.toLocaleString("en-US") : "-"}</td>
+                                    <td className="in-text">{transaction.type === "قبض" ? transaction.amount.toLocaleString("en-US") : "-"}</td>
                                   </tr>
-                                )) : <tr><td colSpan={4}>لا توجد بيانات</td></tr>}
+                                )) : <tr><td colSpan={6}>لا توجد بيانات</td></tr>}
                               </tbody>
-                              <tfoot><tr><th colSpan={3}>الإجمالي: مقبوضات {totalIn.toLocaleString("ar-IQ")} - منصرفات {totalOut.toLocaleString("ar-IQ")}</th><th>{(totalIn - totalOut).toLocaleString("ar-IQ")} {currency.symbol}</th></tr></tfoot>
+                              <tfoot><tr><th colSpan={4}>الإجمالي: مقبوضات {totalIn.toLocaleString("en-US")} - منصرفات {totalOut.toLocaleString("en-US")}</th><th colSpan={2}>{(totalIn - totalOut).toLocaleString("en-US")} {currency.symbol}</th></tr></tfoot>
                             </table>
                           </div>
                         </div>
@@ -1017,9 +1037,9 @@ export default function Home() {
                           {reportRowsByCurrency.map(({ currency, totalIn, totalOut }) => (
                             <tr key={currency.id}>
                               <td><b>{currency.name} ({currency.code})</b></td>
-                              <td className="in-text">{totalIn.toLocaleString("ar-IQ")} {currency.symbol}</td>
-                              <td className="out-text">{totalOut.toLocaleString("ar-IQ")} {currency.symbol}</td>
-                              <td>{Math.abs(totalIn - totalOut).toLocaleString("ar-IQ")} {currency.symbol}</td>
+                              <td className="in-text">{totalIn.toLocaleString("en-US")} {currency.symbol}</td>
+                              <td className="out-text">{totalOut.toLocaleString("en-US")} {currency.symbol}</td>
+                              <td>{Math.abs(totalIn - totalOut).toLocaleString("en-US")} {currency.symbol}</td>
                               <td className={totalIn >= totalOut ? "credit" : "debit"}>{totalIn >= totalOut ? "له" : "عليه"}</td>
                             </tr>
                           ))}
@@ -1050,7 +1070,7 @@ export default function Home() {
                     <div className="currency-symbol">{currency.symbol}</div>
                     <div className="currency-info">
                       <h2>{currency.name}</h2>
-                      <span>{currency.code} • {currency.transactionCount.toLocaleString("ar-IQ")} حركة مسجلة</span>
+                      <span>{currency.code} • {currency.transactionCount.toLocaleString("en-US")} حركة مسجلة</span>
                     </div>
                     <div className="currency-actions">
                       <button className="icon-button" title="تعديل" onClick={(event) => { event.stopPropagation(); setEditingCurrency(currency); }}><Pencil size={16} /></button>
@@ -1210,6 +1230,24 @@ export default function Home() {
                 </label>
                 <button className="primary-button" type="submit"><Check size={17} /> حفظ التغييرات</button>
               </form>
+              <div className="card settings-card backup-settings-card" style={{ marginTop: '20px' }}>
+                <div className="card-heading">
+                  <div><h2>جدولة النسخ الاحتياطي التلقائي</h2><p>حفظ نسخة من بياناتك محلياً بشكل دوري (يعمل في تطبيق APK).</p></div>
+                  <RefreshCcw size={18} className="muted-icon" />
+                </div>
+                <div className="auto-options">
+                  <label className={`auto-option ${backupFrequency === "daily" ? "selected" : ""}`}>
+                    <input type="radio" name="backup-frequency-settings" checked={backupFrequency === "daily"} onChange={() => { setBackupFrequency("daily"); localStorage.setItem("daftar-backup-frequency", "daily"); }} />
+                    <span><b>نسخ يومي</b><small>مرة كل يوم</small></span>
+                    <Check size={16} />
+                  </label>
+                  <label className={`auto-option ${backupFrequency === "hourly" ? "selected" : ""}`}>
+                    <input type="radio" name="backup-frequency-settings" checked={backupFrequency === "hourly"} onChange={() => { setBackupFrequency("hourly"); localStorage.setItem("daftar-backup-frequency", "hourly"); }} />
+                    <span><b>نسخ متكرر</b><small>كل 60 دقيقة</small></span>
+                    <Check size={16} />
+                  </label>
+                </div>
+              </div>
             </section>
           )}
         </div>
@@ -1343,7 +1381,7 @@ export default function Home() {
                   <span>{row.item}</span>
                   <span>{row.quantity}</span>
                   <span>{row.unit}</span>
-                  <span>{row.amount.toLocaleString("ar-IQ")}</span>
+                  <span>{row.amount.toLocaleString("en-US")}</span>
                   <button type="button" className="icon-button danger-button" onClick={() => setSalesRows((rows) => rows.filter((_, rowIndex) => rowIndex !== index))}><Trash2 size={15} /></button>
                 </div>
               ))}
@@ -1352,7 +1390,7 @@ export default function Home() {
             <datalist id="sales-units">{catalogUnits.map((unit) => <option key={unit.id} value={unit.name} />)}</datalist>
             <div className="sales-total">
               <span>الإجمالي الكلي:</span>
-              <strong>{salesRows.reduce((sum, row) => sum + Number(row.amount || 0), 0).toLocaleString("ar-IQ")} {currencies.find((currency) => currency.id === selectedCurrencyId)?.symbol || ""}</strong>
+              <strong>{salesRows.reduce((sum, row) => sum + Number(row.amount || 0), 0).toLocaleString("en-US")} {currencies.find((currency) => currency.id === selectedCurrencyId)?.symbol || ""}</strong>
             </div>
             <div className="modal-actions">
               <button type="button" className="secondary-button" onClick={() => setShowSalesVoucher(false)}>إلغاء</button>
@@ -1419,6 +1457,7 @@ export default function Home() {
             <label>المبلغ <input name="amount" required type="number" min="1" defaultValue={editingTransaction.amount} /></label>
             <label>التاريخ <input name="date" required type="date" defaultValue={transactionDateKey(editingTransaction.date)} /></label>
             <label>البيان <input name="note" defaultValue={editingTransaction.note} /></label>
+            <label>المستلم / المسلم <input name="handover" defaultValue={editingTransaction.handover || ""} placeholder="اختياري" /></label>
             <div className="modal-actions">
               <button type="button" className="secondary-button" onClick={() => setEditingTransaction(null)}>إلغاء</button>
               <button className="primary-button" type="submit"><Check size={17} /> حفظ</button>
