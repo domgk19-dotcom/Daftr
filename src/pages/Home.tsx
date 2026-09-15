@@ -124,15 +124,24 @@ export default function Home() {
   }, [isDarkMode]);
 
   useEffect(() => {
-    const alerts: string[] = [];
+    const alerts: {text: string, action?: string}[] = [];
     const today = new Date().toISOString().slice(0, 10);
     const todayTx = transactions.filter(t => t.date === today);
-    if (todayTx.length > 0) alerts.push(`لديك ${todayTx.length} عملية مالية اليوم.`);
+    if (todayTx.length > 0) alerts.push({ text: `لديك ${todayTx.length} عملية مالية اليوم.` });
     const negativeCustomers = customers.filter(c => c.balance < 0);
-    if (negativeCustomers.length > 0) alerts.push(`تنبيه: ${negativeCustomers.length} حسابات رصيدها دائن (مطلوب).`);
-    if (licenseInfo.isTrial) alerts.push(`النسخة التجريبية متبقي منها ${licenseInfo.trialDaysLeft} يوم.`);
-    setNotifications(alerts.length ? alerts : ["لا توجد تنبيهات مهمة حالياً"]);
-  }, [transactions, customers, licenseInfo]);
+    if (negativeCustomers.length > 0) alerts.push({ text: `تنبيه: ${negativeCustomers.length} حسابات رصيدها دائن (مطلوب).` });
+    if (licenseInfo.isTrial) alerts.push({ text: `النسخة التجريبية متبقي منها ${licenseInfo.trialDaysLeft} يوم.` });
+    
+    if (reminderDay !== "none") {
+      const days = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
+      const currentDay = days[new Date().getDay()];
+      if (currentDay === reminderDay) {
+        alerts.push({ text: "اليوم هو الموعد المحدد لمراسلة العملاء بشأن مطالبات السداد.", action: "whatsapp" });
+      }
+    }
+
+    setNotifications(alerts.length ? alerts : [{ text: "لا توجد تنبيهات مهمة حالياً" }]);
+  }, [transactions, customers, licenseInfo, reminderDay]);
 
   useEffect(() => {
     readAccountingData().then((data) => {
@@ -613,9 +622,39 @@ export default function Home() {
     refreshData(data, "تم تصفير قاعدة البيانات");
   };
 
-  const handleWhatsAppSend = (customer: DbCustomer) => {
+  const getFinalPhone = (phone: string) => {
+    const cleanPhone = phone.replace(/[^\d+]/g, "");
+    let finalPhone = cleanPhone;
+    if (!finalPhone.startsWith("+") && !finalPhone.startsWith("00")) {
+      const code = shopSettings.countryCode.replace(/\D/g, "");
+      if (finalPhone.startsWith("0")) finalPhone = finalPhone.substring(1);
+      finalPhone = `${code}${finalPhone}`;
+    } else {
+      finalPhone = finalPhone.replace(/\D/g, "");
+    }
+    return finalPhone;
+  };
+
+  const handleWhatsAppText = (customer: DbCustomer) => {
+    setContactedIds((prev) => [...prev, customer.id]);
+    const finalPhone = getFinalPhone(customer.phone);
+    const owesUs = customer.balance < 0;
+    const balanceStr = formatMoney(Math.abs(customer.balance), currencies.find(curr => curr.id === shopSettings.defaultCurrencyId));
+    let msg = `مرحباً ${customer.name}،\nتحية طيبة من [${shopSettings.name}].\n\n`;
+    if (owesUs) {
+      msg += `نود تذكيركم بأن الرصيد المتبقي عليكم هو ${balanceStr}.\nيرجى التكرم بمراجعة الحساب.\n\n`;
+    } else if (customer.balance > 0) {
+      msg += `نود إعلامكم بأن الرصيد المتبقي لكم لدينا هو ${balanceStr}.\n\n`;
+    } else {
+      msg += `حسابكم لدينا مصفى ولا يوجد أي رصيد.\n\n`;
+    }
+    msg += `شكراً لتعاملكم معنا.`;
+    window.open(`https://wa.me/${finalPhone}?text=${encodeURIComponent(msg)}`, "_blank");
+  };
+
+  const handleWhatsAppSharePdf = (customer: DbCustomer) => {
     setWaCustomerForPdf(customer);
-    setToast("جاري تجهيز كشف الحساب وتجهيز الواتساب...");
+    setToast("جاري تجهيز كشف الحساب...");
     setTimeout(async () => {
       try {
         const element = document.getElementById("whatsapp-pdf-content");
@@ -626,20 +665,29 @@ export default function Home() {
           const pdfWidth = pdf.internal.pageSize.getWidth();
           const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
           pdf.addImage(imgData, "PNG", 0, 0, pdfWidth, pdfHeight);
-          pdf.save(`كشف_حساب_${customer.name}.pdf`);
+          
+          if (Capacitor.isNativePlatform()) {
+            const base64 = pdf.output("datauristring").split(",")[1];
+            const path = `statement_${customer.id}_${Date.now()}.pdf`;
+            const writeResult = await Filesystem.writeFile({
+              path,
+              data: base64,
+              directory: Directory.Cache
+            });
+            await Share.share({
+              title: `كشف حساب ${customer.name}`,
+              url: writeResult.uri
+            });
+          } else {
+            pdf.save(`كشف_حساب_${customer.name}.pdf`);
+            const finalPhone = getFinalPhone(customer.phone);
+            const msg = `مرحباً ${customer.name}،\n\nنرفق لكم كشف الحساب التفصيلي الخاص بكم.\n`;
+            setTimeout(() => {
+              window.open(`https://wa.me/${finalPhone}?text=${encodeURIComponent(msg)}`, "_blank");
+            }, 1000);
+          }
         }
         setContactedIds((prev) => [...prev, customer.id]);
-        const cleanPhone = customer.phone.replace(/[^\d+]/g, "");
-        let finalPhone = cleanPhone;
-        if (!finalPhone.startsWith("+") && !finalPhone.startsWith("00")) {
-          const code = shopSettings.countryCode.replace(/\D/g, "");
-          if (finalPhone.startsWith("0")) finalPhone = finalPhone.substring(1);
-          finalPhone = `${code}${finalPhone}`;
-        } else {
-          finalPhone = finalPhone.replace(/\D/g, "");
-        }
-        const msg = `مرحباً ${customer.name}،\nتحية طيبة من [${shopSettings.name}].\n\nنرفق لكم كشف الحساب التفصيلي الخاص بكم.\nيرجى مراجعته والتواصل معنا في حال وجود أي استفسار.\n\nشكراً لتعاملكم معنا.`;
-        window.open(`https://wa.me/${finalPhone}?text=${encodeURIComponent(msg)}`, "_blank");
         setWaCustomerForPdf(null);
       } catch (err) {
         setToast("حدث خطأ أثناء تجهيز التقرير");
@@ -676,41 +724,8 @@ export default function Home() {
         </div>
       )}
 
-      {menuOpen && <div className="sidebar-backdrop" onClick={() => setMenuOpen(false)} />}
-      <aside className={`sidebar ${menuOpen ? "is-open" : ""}`}>
-        <div className="brand">
-          <div className="brand-mark"><img src="/icon.jpg" alt="Logo" style={{ width: 22, height: 22, borderRadius: 4 }} /></div>
-          <div><strong>جديعي سوفت</strong><span>نظام مالي مبسط</span></div>
-          <button className="sidebar-close icon-button" onClick={() => setMenuOpen(false)}><X size={19} /></button>
-        </div>
-        <div className="workspace-switcher">
-          <div><b>{shopSettings.name}</b><span>{shopSettings.phone || "بدون رقم"}</span></div>
-          <ChevronDown size={16} />
-        </div>
-        <nav className="main-nav">
-          <p className="nav-label">القائمة الرئيسية</p>
-          {navItems.map(({ id, label, icon: Icon }) => (
-            <button key={id} className={`nav-item ${activeView === id ? "active" : ""}`} onClick={() => handleNav(id)}>
-              <Icon size={19} /><span>{label}</span>
-              {id === "accounts" && <em>{customers.length.toLocaleString("en-US")}</em>}
-            </button>
-          ))}
-          <p className="nav-label nav-label-spaced">النظام</p>
-          <button className={`nav-item ${activeView === "backup" ? "active" : ""}`} onClick={() => handleNav("backup")}><Download size={19} /><span>النسخ الاحتياطي</span></button>
-          <button className={`nav-item ${activeView === "settings" ? "active" : ""}`} onClick={() => handleNav("settings")}><Settings size={19} /><span>الإعدادات</span></button>
-          <button className={`nav-item ${activeView === "license" ? "active" : ""}`} onClick={() => handleNav("license")}><ShieldCheck size={19} /><span>الترخيص</span></button>
-        </nav>
-        <div className="sidebar-bottom">
-          <div className="tip-card">
-            <Sparkles size={18} />
-            <div><b>مرحباً بك!</b><p>يعمل النظام بالكامل دون اتصال بالإنترنت.</p></div>
-          </div>
-        </div>
-      </aside>
-
       <main className="main-content">
         <header className="topbar">
-          <button className="mobile-menu icon-button" onClick={() => setMenuOpen(true)}><Menu size={22} /></button>
           <div className="breadcrumb"><span>الرئيسية</span><ChevronLeft size={15} /><b>{title}</b></div>
           <div className="topbar-actions" style={{ position: 'relative' }}>
             <button className="icon-button" aria-label="تبديل المظهر" onClick={() => setIsDarkMode(!isDarkMode)}>
@@ -718,7 +733,7 @@ export default function Home() {
             </button>
             <button className="icon-button notification" aria-label="الإشعارات" onClick={() => setShowNotifications(!showNotifications)}>
               <Bell size={19} />
-              {notifications.length > 0 && notifications[0] !== "لا توجد تنبيهات مهمة حالياً" && <i />}
+              {notifications.length > 0 && notifications[0].text !== "لا توجد تنبيهات مهمة حالياً" && <i />}
             </button>
             {showNotifications && (
               <>
@@ -727,7 +742,9 @@ export default function Home() {
                   <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--line)', fontWeight: 'bold', fontSize: 13, background: 'var(--soft, #f7f9f8)', color: 'var(--ink)' }}>الإشعارات والتنبيهات</div>
                   <div style={{ maxHeight: 300, overflowY: 'auto' }}>
                     {notifications.map((note, i) => (
-                      <div key={i} style={{ padding: '12px 16px', borderBottom: '1px solid var(--line)', fontSize: 11, color: 'var(--muted)', lineHeight: 1.6 }}>{note}</div>
+                      <div key={i} onClick={() => { if (note.action) { handleNav(note.action); setShowNotifications(false); } }} style={{ padding: '12px 16px', borderBottom: '1px solid var(--line)', fontSize: 11, color: note.action ? 'var(--green)' : 'var(--muted)', lineHeight: 1.6, cursor: note.action ? 'pointer' : 'default', fontWeight: note.action ? '600' : '400' }}>
+                        {note.text}
+                      </div>
                     ))}
                   </div>
                 </div>
@@ -1069,20 +1086,22 @@ export default function Home() {
                     </section>
                   ))
                 ) : (
-                  <table className="report-document-summary">
-                    <thead><tr><th>العملة</th><th>إجمالي المقبوضات</th><th>إجمالي المنصرفات</th><th>الرصيد الصافي</th><th>حالة الرصيد</th></tr></thead>
-                    <tbody>
-                      {reportRowsByCurrency.map(({ currency, totalIn, totalOut }) => (
-                        <tr key={currency.id}>
-                          <td><b>{currency.name} ({currency.code})</b></td>
-                          <td className="in-text">{totalIn.toLocaleString("en-US")} {currency.symbol}</td>
-                          <td className="out-text">{totalOut.toLocaleString("en-US")} {currency.symbol}</td>
-                          <td>{Math.abs(totalIn - totalOut).toLocaleString("en-US")} {currency.symbol}</td>
-                          <td className={totalIn >= totalOut ? "credit" : "debit"}>{totalIn >= totalOut ? "له (دائن)" : "عليه (مدين)"}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                  <div style={{ overflowX: 'auto', paddingBottom: '10px' }}>
+                    <table className="report-document-summary">
+                      <thead><tr><th>العملة</th><th>إجمالي المقبوضات</th><th>إجمالي المنصرفات</th><th>الرصيد الصافي</th><th>حالة الرصيد</th></tr></thead>
+                      <tbody>
+                        {reportRowsByCurrency.map(({ currency, totalIn, totalOut }) => (
+                          <tr key={currency.id}>
+                            <td><b>{currency.name} ({currency.code})</b></td>
+                            <td className="in-text">{totalIn.toLocaleString("en-US")} {currency.symbol}</td>
+                            <td className="out-text">{totalOut.toLocaleString("en-US")} {currency.symbol}</td>
+                            <td>{Math.abs(totalIn - totalOut).toLocaleString("en-US")} {currency.symbol}</td>
+                            <td className={totalIn >= totalOut ? "credit" : "debit"}>{totalIn >= totalOut ? "له (دائن)" : "عليه (مدين)"}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 )}
                 <footer className="report-document-footer">
                   <span>إجمالي الحركات: {reportTransactions.length.toLocaleString("en-US")}</span>
@@ -1250,20 +1269,23 @@ export default function Home() {
                       <tr>
                         <th>العميل</th>
                         <th>رقم الهاتف</th>
-                        <th>إجمالي الرصيد (مطلوب)</th>
+                        <th>إجمالي الرصيد</th>
                         <th>حالة التواصل</th>
-                        <th>إجراء</th>
+                        <th>إجراءات الواتساب</th>
                       </tr>
                     </thead>
                     <tbody>
                       {customers
-                        .filter(c => c.phone && c.balance < 0)
+                        .filter(c => c.phone)
                         .filter(c => !query || c.name.includes(query) || c.phone.includes(query))
                         .map(c => (
                         <tr key={c.id}>
                           <td><b>{c.name}</b></td>
                           <td dir="ltr" style={{ textAlign: "right" }}>{c.phone}</td>
-                          <td className="debit">{formatMoney(c.balance, currencies.find(curr => curr.id === shopSettings.defaultCurrencyId))}</td>
+                          <td className={c.balance < 0 ? "debit" : (c.balance > 0 ? "credit" : "balanced")}>
+                            {formatMoney(Math.abs(c.balance), currencies.find(curr => curr.id === shopSettings.defaultCurrencyId))}
+                            {c.balance < 0 ? ' (عليه)' : c.balance > 0 ? ' (له)' : ''}
+                          </td>
                           <td>
                             {contactedIds.includes(c.id) ? (
                               <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, color: '#16815e', fontSize: 10, background: '#e4f6ee', padding: '4px 8px', borderRadius: 20 }}><CheckCircle2 size={12} /> تم التواصل</span>
@@ -1272,18 +1294,21 @@ export default function Home() {
                             )}
                           </td>
                           <td>
-                            <button className="primary-button compact" onClick={() => handleWhatsAppSend(c)}><MessageCircle size={14} /> إرسال كشف حساب</button>
+                            <div style={{ display: 'flex', gap: 8 }}>
+                              <button className="primary-button compact" onClick={() => handleWhatsAppText(c)} style={{ padding: '6px 12px' }}><MessageCircle size={14} /> رسالة نصية</button>
+                              <button className="secondary-button compact" onClick={() => handleWhatsAppSharePdf(c)} style={{ padding: '6px 12px' }}><Share2 size={14} /> مشاركة كشف (PDF)</button>
+                            </div>
                           </td>
                         </tr>
                       ))}
-                      {customers.filter(c => c.phone && c.balance < 0).length === 0 && (
-                        <tr><td colSpan={5} style={{ textAlign: 'center', padding: 30 }}>لا يوجد عملاء لديهم مديونية وأرقام هواتف مسجلة.</td></tr>
+                      {customers.filter(c => c.phone).length === 0 && (
+                        <tr><td colSpan={5} style={{ textAlign: 'center', padding: 30 }}>لا يوجد عملاء بأرقام هواتف مسجلة.</td></tr>
                       )}
                     </tbody>
                   </table>
                 </div>
-                <div style={{ padding: 15, background: '#fff0eb', borderRadius: 8, marginTop: 15, fontSize: 11, color: '#c96850', display: 'flex', gap: 8, alignItems: 'center' }}>
-                  <Bell size={16} /> <b>ملاحظة هامة:</b> سيتم تنزيل ملف PDF (كشف الحساب) في جهازك، وفتح تطبيق واتساب بالرسالة التلقائية. يرجى إرفاق الملف يدوياً داخل المحادثة.
+                <div style={{ padding: 15, background: '#e4f7ef', borderRadius: 8, marginTop: 15, fontSize: 11, color: '#14805b', display: 'flex', gap: 8, alignItems: 'center' }}>
+                  <Bell size={16} /> <b>طرق الإرسال:</b> يمكنك إرسال رسالة نصية تذكيرية مباشرة، أو توليد كشف حساب PDF ومشاركته للعميل في حالة طلبه للتفاصيل.
                 </div>
               </div>
             </section>
@@ -1465,6 +1490,34 @@ export default function Home() {
                 </label>
                 <button className="primary-button" type="submit"><Check size={17} /> حفظ التغييرات</button>
               </form>
+              <div className="card settings-card" style={{ marginTop: '20px' }}>
+                <div className="card-heading">
+                  <div><h2>جدولة إشعارات مراسلة العملاء</h2><p>اختر يوماً في الأسبوع ليقوم النظام بتذكيرك بمراسلة العملاء المتأخرين.</p></div>
+                  <Bell size={18} className="muted-icon" />
+                </div>
+                <div className="auto-options">
+                  <label>يوم التذكير الأسبوعي
+                    <select 
+                      value={reminderDay} 
+                      onChange={(e) => { 
+                        setReminderDay(e.target.value); 
+                        localStorage.setItem("daftar-reminder-day", e.target.value);
+                        setToast("تم حفظ إعداد الجدولة");
+                      }}
+                      style={{ marginTop: 10 }}
+                    >
+                      <option value="none">بدون تذكير (إيقاف)</option>
+                      <option value="saturday">السبت</option>
+                      <option value="sunday">الأحد</option>
+                      <option value="monday">الإثنين</option>
+                      <option value="tuesday">الثلاثاء</option>
+                      <option value="wednesday">الأربعاء</option>
+                      <option value="thursday">الخميس</option>
+                      <option value="friday">الجمعة</option>
+                    </select>
+                  </label>
+                </div>
+              </div>
               <div className="card settings-card backup-settings-card" style={{ marginTop: '20px' }}>
                 <div className="card-heading">
                   <div><h2>جدولة النسخ الاحتياطي التلقائي</h2><p>حفظ نسخة من بياناتك محلياً بشكل دوري (يعمل في تطبيق APK).</p></div>
