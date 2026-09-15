@@ -281,7 +281,12 @@ export async function saveShopSettings(input: Omit<DbShopSettings, 'id'>) {
 export async function updateCustomer(id: number, input: { name: string; phone: string; group: string }) {
   const db = await getDb();
   const count = Number(db.exec("SELECT COUNT(*) FROM transactions WHERE customer_id = ?", [id])[0]?.values[0]?.[0] || 0);
-  if (count) throw new Error("لا يمكن تعديل عميل لديه عمليات");
+  if (count) {
+    const currentName = db.exec("SELECT name FROM customers WHERE id = ?", [id])[0]?.values[0]?.[0] as string;
+    if (currentName !== input.name) {
+      throw new Error("لا يمكن تعديل اسم العميل لأن لديه عمليات مسجلة. يمكنك تعديل رقم الهاتف والمجموعة فقط.");
+    }
+  }
   const statement = db.prepare("UPDATE customers SET name = ?, phone = ?, group_name = ?, initials = ? WHERE id = ?");
   statement.run([input.name, input.phone, input.group, input.name.split(" ").slice(0, 2).map((part) => part[0]).join(""), id]);
   statement.free();

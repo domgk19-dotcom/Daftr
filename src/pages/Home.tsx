@@ -603,19 +603,6 @@ export default function Home() {
     setToast("تم تحميل النسخة");
   };
 
-  const restoreBackup = () => {
-    const input = document.createElement("input");
-    input.type = "file";
-    input.accept = ".sqlite,.db,.sqlite3";
-    input.onchange = async () => {
-      const file = input.files?.[0];
-      if (!file) return;
-      const data = await importDatabase(new Uint8Array(await file.arrayBuffer()));
-      refreshData(data, "تم استعادة البيانات");
-    };
-    input.click();
-  };
-
   const createZeroDatabase = async () => {
     if (!window.confirm("تأكيد تصفير النظام! سيتم مسح كافة البيانات.")) return;
     const data = await createEmptyDatabase();
@@ -659,12 +646,12 @@ export default function Home() {
       try {
         const element = document.getElementById("whatsapp-pdf-content");
         if (element) {
-          const canvas = await html2canvas(element, { scale: 2 });
-          const imgData = canvas.toDataURL("image/png");
+          const canvas = await html2canvas(element, { scale: 2, useCORS: true, backgroundColor: "#ffffff" });
+          const imgData = canvas.toDataURL("image/jpeg", 0.92);
           const pdf = new jsPDF("p", "mm", "a4");
           const pdfWidth = pdf.internal.pageSize.getWidth();
           const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
-          pdf.addImage(imgData, "PNG", 0, 0, pdfWidth, pdfHeight);
+          pdf.addImage(imgData, "JPEG", 0, 0, pdfWidth, pdfHeight);
           
           if (Capacitor.isNativePlatform()) {
             const base64 = pdf.output("datauristring").split(",")[1];
@@ -1387,7 +1374,20 @@ export default function Home() {
                 <div className="card backup-action-card">
                   <span className="backup-action-icon restore"><RefreshCcw size={20} /></span>
                   <div><h3>استعادة البيانات</h3><p>استعادة نسخة سابقة من ملف SQLite محفوظ لديك.</p></div>
-                  <button className="secondary-button compact" onClick={restoreBackup}>استعادة</button>
+                  <label className="secondary-button compact" style={{ cursor: 'pointer', margin: 0 }}>
+                    استعادة
+                    <input type="file" accept=".sqlite,.db,.sqlite3,*/*" style={{ display: 'none' }} onChange={async (e) => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+                      if (!window.confirm("تأكيد الاستعادة؟ سيتم مسح البيانات الحالية واستبدالها بالنسخة.")) {
+                        e.target.value = '';
+                        return;
+                      }
+                      const data = await importDatabase(new Uint8Array(await file.arrayBuffer()));
+                      refreshData(data, "تم استعادة البيانات");
+                      e.target.value = '';
+                    }} />
+                  </label>
                 </div>
               </div>
             </section>
@@ -1472,7 +1472,31 @@ export default function Home() {
                 </div>
                 <label>اسم المحل/الشركة <input name="shop-name" required defaultValue={shopSettings.name} /></label>
                 <label>رقم الهاتف <input name="shop-phone" defaultValue={shopSettings.phone} placeholder="لإظهاره في التقارير" /></label>
-                <label>رابط الشعار <input name="shop-logo" defaultValue={shopSettings.logo} placeholder="رابط صورة الشعار" /></label>
+                <label>شعار المحل
+                  <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginTop: 6 }}>
+                    {shopSettings.logo && <img src={shopSettings.logo} alt="شعار" style={{ width: 40, height: 40, borderRadius: 6, objectFit: 'contain', background: '#f5f7f6' }} />}
+                    <label className="secondary-button compact" style={{ cursor: 'pointer', flex: 1, justifyContent: 'center', margin: 0, padding: '8px' }}>
+                      اختيار صورة الشعار
+                      <input type="file" accept="image/*" style={{ display: 'none' }} onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (!file) return;
+                        const reader = new FileReader();
+                        reader.onload = (ev) => {
+                          const base64 = ev.target?.result as string;
+                          setShopSettings(prev => ({ ...prev, logo: base64 }));
+                        };
+                        reader.readAsDataURL(file);
+                        e.target.value = '';
+                      }} />
+                    </label>
+                    {shopSettings.logo && (
+                      <button type="button" className="icon-button danger-button" onClick={() => setShopSettings(prev => ({ ...prev, logo: "" }))} style={{ width: 40, height: 40, padding: 0 }}>
+                        <Trash2 size={16} />
+                      </button>
+                    )}
+                    <input type="hidden" name="shop-logo" value={shopSettings.logo} />
+                  </div>
+                </label>
                 <div className="settings-two-col">
                   <label>البلد
                     <select name="shop-country" defaultValue={shopSettings.country}>
@@ -1583,25 +1607,27 @@ export default function Home() {
                 </tr>
               </thead>
               <tbody>
-                {transactions.filter(t => t.customerId === waCustomerForPdf.id).map(t => (
+                {transactions.filter(t => t.customer === waCustomerForPdf.name).map(t => (
                   <tr key={t.id}>
                     <td style={{ padding: 10, borderBottom: '1px solid #eee', color: '#333' }}>{t.date}</td>
-                    <td style={{ padding: 10, borderBottom: '1px solid #eee', color: '#333' }}>{t.description}</td>
+                    <td style={{ padding: 10, borderBottom: '1px solid #eee', color: '#333' }}>{t.note || t.voucherType || (t.type === 'قبض' ? 'سند قبض' : 'سند صرف')}</td>
                     <td style={{ padding: 10, borderBottom: '1px solid #eee', color: '#333' }}>{currencies.find(c => c.id === t.currencyId)?.code || ''}</td>
-                    <td style={{ padding: 10, borderBottom: '1px solid #eee', color: t.type === 'debit' ? '#c96850' : '#333' }}>{t.type === 'debit' ? t.amount.toLocaleString('en-US') : '-'}</td>
-                    <td style={{ padding: 10, borderBottom: '1px solid #eee', color: t.type === 'credit' ? '#17825d' : '#333' }}>{t.type === 'credit' ? t.amount.toLocaleString('en-US') : '-'}</td>
+                    <td style={{ padding: 10, borderBottom: '1px solid #eee', color: t.type === 'صرف' ? '#c96850' : '#333' }}>{t.type === 'صرف' ? t.amount.toLocaleString('en-US') : '-'}</td>
+                    <td style={{ padding: 10, borderBottom: '1px solid #eee', color: t.type === 'قبض' ? '#17825d' : '#333' }}>{t.type === 'قبض' ? t.amount.toLocaleString('en-US') : '-'}</td>
                   </tr>
                 ))}
+                {transactions.filter(t => t.customer === waCustomerForPdf.name).length === 0 && (
+                  <tr><td colSpan={5} style={{ padding: 15, textAlign: 'center', color: '#666' }}>لا توجد عمليات مسجلة.</td></tr>
+                )}
               </tbody>
             </table>
-
             <div style={{ background: '#f9f9f9', padding: '15px 20px', borderRadius: 8, border: '1px solid #eee' }}>
               <h3 style={{ margin: '0 0 15px', color: '#13795b', fontSize: 16 }}>ملخص الأرصدة المتأخرة حسب العملة:</h3>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 15 }}>
                 {currencies.map(curr => {
-                  const txs = transactions.filter(t => t.customerId === waCustomerForPdf.id && t.currencyId === curr.id);
+                  const txs = transactions.filter(t => t.customer === waCustomerForPdf.name && t.currencyId === curr.id);
                   if (txs.length === 0) return null;
-                  const total = txs.reduce((sum, t) => sum + (t.type === 'debit' ? t.amount : -t.amount), 0);
+                  const total = txs.reduce((sum, t) => sum + (t.type === 'صرف' ? t.amount : -t.amount), 0);
                   if (total === 0) return null;
                   return (
                     <div key={curr.id} style={{ display: 'flex', justifyContent: 'space-between', padding: 10, background: '#fff', borderRadius: 6, border: '1px solid #ddd', fontSize: 15 }}>
