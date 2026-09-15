@@ -29,7 +29,7 @@ export type DbTransaction = {
 
 export type DbCurrency = { id: number; name: string; code: string; symbol: string; decimals: number; transactionCount: number };
 export type DbCatalogItem = { id: number; name: string };
-export type DbShopSettings = { id: number; name: string; phone: string; logo: string; country: string; countryCode: string; defaultCurrencyId: number };
+export type DbShopSettings = { id: number; name: string; phone: string; logo: string; country: string; countryCode: string; defaultCurrencyId: number; enableSalesVouchers: boolean; enablePurchaseVouchers: boolean };
 
 let database: any = null;
 let databasePromise: Promise<any> | null = null;
@@ -118,13 +118,17 @@ function openStoredDb(bytes: Uint8Array | null, SQL: any) {
     CREATE TABLE IF NOT EXISTS transactions (id INTEGER PRIMARY KEY, customer_id INTEGER NOT NULL, currency_id INTEGER DEFAULT 1, type TEXT NOT NULL CHECK(type IN ('قبض', 'صرف')), amount REAL NOT NULL, note TEXT, transaction_date TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY(customer_id) REFERENCES customers(id), FOREIGN KEY(currency_id) REFERENCES currencies(id));
     CREATE TABLE IF NOT EXISTS catalog_items (id INTEGER PRIMARY KEY, name TEXT UNIQUE NOT NULL);
     CREATE TABLE IF NOT EXISTS catalog_units (id INTEGER PRIMARY KEY, name TEXT UNIQUE NOT NULL);
-    CREATE TABLE IF NOT EXISTS shop_settings (id INTEGER PRIMARY KEY CHECK(id = 1), name TEXT NOT NULL, phone TEXT DEFAULT '', logo TEXT DEFAULT '', country TEXT DEFAULT 'اليمن', country_code TEXT DEFAULT '+967', default_currency_id INTEGER DEFAULT 1);
+    CREATE TABLE IF NOT EXISTS shop_settings (id INTEGER PRIMARY KEY CHECK(id = 1), name TEXT NOT NULL, phone TEXT DEFAULT '', logo TEXT DEFAULT '', country TEXT DEFAULT 'اليمن', country_code TEXT DEFAULT '+967', default_currency_id INTEGER DEFAULT 1, enable_sales_vouchers INTEGER DEFAULT 1, enable_purchase_vouchers INTEGER DEFAULT 1);
   `);
 
   const columns = db.exec("PRAGMA table_info(transactions)")[0]?.values || [];
   if (!columns.some((column: any[]) => column[1] === "currency_id")) db.run("ALTER TABLE transactions ADD COLUMN currency_id INTEGER DEFAULT 1");
   if (!columns.some((column: any[]) => column[1] === "voucher_type")) db.run("ALTER TABLE transactions ADD COLUMN voucher_type TEXT DEFAULT ''");
   if (!columns.some((column: any[]) => column[1] === "handover")) db.run("ALTER TABLE transactions ADD COLUMN handover TEXT DEFAULT ''");
+
+  const shopColumns = db.exec("PRAGMA table_info(shop_settings)")[0]?.values || [];
+  if (!shopColumns.some((column: any[]) => column[1] === "enable_sales_vouchers")) db.run("ALTER TABLE shop_settings ADD COLUMN enable_sales_vouchers INTEGER DEFAULT 1");
+  if (!shopColumns.some((column: any[]) => column[1] === "enable_purchase_vouchers")) db.run("ALTER TABLE shop_settings ADD COLUMN enable_purchase_vouchers INTEGER DEFAULT 1");
 
   const legacyCurrency = db.exec("SELECT code, name FROM currencies WHERE id = 1")[0]?.values[0];
   if (legacyCurrency && (legacyCurrency[0] === "IQD" || legacyCurrency[1] === "دينار عراقي")) db.run("UPDATE currencies SET name = 'ريال يمني', code = 'YER', symbol = 'ر.ي', decimals = 0 WHERE id = 1");
@@ -202,9 +206,9 @@ export async function readAccountingData() {
   const currencyRows = db.exec("SELECT cur.id, cur.name, cur.code, cur.symbol, cur.decimals, COUNT(t.id) FROM currencies cur LEFT JOIN transactions t ON t.currency_id=cur.id GROUP BY cur.id ORDER BY cur.id")[0]?.values || [];
   const itemRows = db.exec("SELECT id, name FROM catalog_items ORDER BY name COLLATE NOCASE")[0]?.values || [];
   const unitRows = db.exec("SELECT id, name FROM catalog_units ORDER BY name COLLATE NOCASE")[0]?.values || [];
-  const shopRow = db.exec("SELECT id, name, phone, logo, country, country_code, default_currency_id FROM shop_settings WHERE id = 1")[0]?.values[0];
+  const shopRow = db.exec("SELECT id, name, phone, logo, country, country_code, default_currency_id, enable_sales_vouchers, enable_purchase_vouchers FROM shop_settings WHERE id = 1")[0]?.values[0];
 
-  const shop = shopRow ? { id: Number(shopRow[0]), name: String(shopRow[1]), phone: String(shopRow[2] || ''), logo: String(shopRow[3] || ''), country: String(shopRow[4] || 'اليمن'), countryCode: String(shopRow[5] || '+967'), defaultCurrencyId: Number(shopRow[6] || 1) } : null;
+  const shop = shopRow ? { id: Number(shopRow[0]), name: String(shopRow[1]), phone: String(shopRow[2] || ''), logo: String(shopRow[3] || ''), country: String(shopRow[4] || 'اليمن'), countryCode: String(shopRow[5] || '+967'), defaultCurrencyId: Number(shopRow[6] || 1), enableSalesVouchers: Boolean(shopRow[7] ?? 1), enablePurchaseVouchers: Boolean(shopRow[8] ?? 1) } : null;
 
   return { customers: customerRows.map(rowToCustomer), transactions: transactionRows.map(rowToTransaction), currencies: currencyRows.map(rowToCurrency), items: itemRows.map((row: any[]) => ({ id: Number(row[0]), name: String(row[1]) })), units: unitRows.map((row: any[]) => ({ id: Number(row[0]), name: String(row[1]) })), shop };
 }
@@ -271,8 +275,8 @@ async function insertCatalogVoucher(input: { customerName: string; currencyId: n
 
 export async function saveShopSettings(input: Omit<DbShopSettings, 'id'>) {
   const db = await getDb();
-  const statement = db.prepare("INSERT INTO shop_settings (id, name, phone, logo, country, country_code, default_currency_id) VALUES (1, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET name=excluded.name, phone=excluded.phone, logo=excluded.logo, country=excluded.country, country_code=excluded.country_code, default_currency_id=excluded.default_currency_id");
-  statement.run([input.name, input.phone, input.logo, input.country, input.countryCode, input.defaultCurrencyId]);
+  const statement = db.prepare("INSERT INTO shop_settings (id, name, phone, logo, country, country_code, default_currency_id, enable_sales_vouchers, enable_purchase_vouchers) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET name=excluded.name, phone=excluded.phone, logo=excluded.logo, country=excluded.country, country_code=excluded.country_code, default_currency_id=excluded.default_currency_id, enable_sales_vouchers=excluded.enable_sales_vouchers, enable_purchase_vouchers=excluded.enable_purchase_vouchers");
+  statement.run([input.name, input.phone, input.logo, input.country, input.countryCode, input.defaultCurrencyId, input.enableSalesVouchers ? 1 : 0, input.enablePurchaseVouchers ? 1 : 0]);
   statement.free();
   await persistDb();
   return readAccountingData();

@@ -73,7 +73,7 @@ export default function Home() {
   const [currencies, setCurrencies] = useState<DbCurrency[]>([]);
   const [catalogItems, setCatalogItems] = useState<DbCatalogItem[]>([]);
   const [catalogUnits, setCatalogUnits] = useState<DbCatalogItem[]>([]);
-  const [shopSettings, setShopSettings] = useState<DbShopSettings>({ id: 1, name: "اسم المحل", phone: "", logo: "", country: "اليمن", countryCode: "+967", defaultCurrencyId: 1 });
+  const [shopSettings, setShopSettings] = useState<DbShopSettings>({ id: 1, name: "اسم المحل", phone: "", logo: "", country: "اليمن", countryCode: "+967", defaultCurrencyId: 1, enableSalesVouchers: true, enablePurchaseVouchers: true });
   const [isDarkMode, setIsDarkMode] = useState(false);
   const [notifications, setNotifications] = useState<{text: string, action?: string}[]>([]);
   const [showNotifications, setShowNotifications] = useState(false);
@@ -248,7 +248,9 @@ export default function Home() {
       logo: String(form.get("shop-logo") || ""),
       country: String(form.get("shop-country") || "اليمن"),
       countryCode: String(form.get("shop-country-code") || ({ "اليمن": "+967", "العراق": "+964", "السعودية": "+966", "الأردن": "+962", "الإمارات": "+971", "الكويت": "+965", "قطر": "+974", "عمان": "+968", "البحرين": "+973", "مصر": "+20" } as Record<string, string>)[String(form.get("shop-country") || "اليمن")] || "+967"),
-      defaultCurrencyId: Number(form.get("shop-currency") || 1)
+      defaultCurrencyId: Number(form.get("shop-currency") || 1),
+      enableSalesVouchers: form.get("enable-sales-vouchers") === "on",
+      enablePurchaseVouchers: form.get("enable-purchase-vouchers") === "on"
     }).then((data) => {
       refreshData(data, "تم تحديث الإعدادات بنجاح");
       setShopSettings(data.shop || shopSettings);
@@ -395,21 +397,52 @@ export default function Home() {
     });
   };
 
+  const [txType, setTxType] = useState<"قبض" | "صرف" | "قيد">("قبض");
+
   const addTransaction = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
-    const customerName = String(data.get("customer") || "");
     const amount = Number(data.get("amount") || 0);
-    const type = String(data.get("type") || "قبض") as "قبض" | "صرف";
+    const type = String(data.get("type") || "قبض") as "قبض" | "صرف" | "قيد";
     const handover = String(data.get("handover") || "").trim();
-    if (!customerName || !amount) return;
-    insertTransaction({ customerName, currencyId: Number(data.get("currency") || 1), type, amount, note: String(data.get("note") || ""), date: String(data.get("date") || new Date().toISOString().slice(0, 10)), handover }).then(({ customers: loadedCustomers, transactions: loadedTransactions, currencies: loadedCurrencies }) => {
-      setCustomers(loadedCustomers);
-      setTransactions(loadedTransactions);
-      setCurrencies(loadedCurrencies);
-      setShowTransaction(false);
-      setToast("تمت الإضافة بنجاح");
-    });
+    const note = String(data.get("note") || "");
+    const date = String(data.get("date") || new Date().toISOString().slice(0, 10));
+    const currencyId = Number(data.get("currency") || shopSettings.defaultCurrencyId);
+
+    if (!amount) return;
+
+    if (type === "قيد") {
+      const fromCustomer = String(data.get("fromCustomer") || "");
+      const toCustomer = String(data.get("toCustomer") || "");
+      if (!fromCustomer || !toCustomer || fromCustomer === toCustomer) {
+        setToast("الرجاء تحديد أطراف القيد بشكل صحيح");
+        return;
+      }
+      const noteTo = note ? `${note} (من حساب ${fromCustomer})` : `قيد بسيط لكم من حساب ${fromCustomer}`;
+      const noteFrom = note ? `${note} (إلى حساب ${toCustomer})` : `قيد بسيط عليكم إلى حساب ${toCustomer}`;
+
+      insertTransaction({ customerName: toCustomer, currencyId, type: "قبض", amount, note: noteTo, date, handover })
+        .then(() => insertTransaction({ customerName: fromCustomer, currencyId, type: "صرف", amount, note: noteFrom, date, handover }))
+        .then(({ customers: loadedCustomers, transactions: loadedTransactions, currencies: loadedCurrencies }) => {
+          setCustomers(loadedCustomers);
+          setTransactions(loadedTransactions);
+          setCurrencies(loadedCurrencies);
+          setShowTransaction(false);
+          setTxType("قبض");
+          setToast("تم إضافة القيد بنجاح");
+        }).catch((error: Error) => setToast(error.message));
+    } else {
+      const customerName = String(data.get("customer") || "");
+      if (!customerName) return;
+      insertTransaction({ customerName, currencyId, type, amount, note, date, handover }).then(({ customers: loadedCustomers, transactions: loadedTransactions, currencies: loadedCurrencies }) => {
+        setCustomers(loadedCustomers);
+        setTransactions(loadedTransactions);
+        setCurrencies(loadedCurrencies);
+        setShowTransaction(false);
+        setTxType("قبض");
+        setToast("تمت الإضافة بنجاح");
+      }).catch((error: Error) => setToast(error.message));
+    }
   };
 
   const refreshData = (data: { customers: Customer[]; transactions: Transaction[]; currencies: DbCurrency[]; items?: DbCatalogItem[]; units?: DbCatalogItem[]; shop?: DbShopSettings | null }, message: string) => {
@@ -1512,7 +1545,25 @@ export default function Home() {
                     {currencies.map((currency) => <option key={currency.id} value={currency.id}>{currency.name} ({currency.symbol})</option>)}
                   </select>
                 </label>
-                <button className="primary-button" type="submit"><Check size={17} /> حفظ التغييرات</button>
+                <div style={{ marginTop: '20px', display: 'flex', flexDirection: 'column', gap: '15px' }}>
+                  <label className="switch" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
+                    <div>
+                      <b style={{ color: '#405259', fontSize: '13px' }}>سندات المبيعات</b>
+                      <span style={{ display: 'block', color: '#9ca8aa', fontSize: '10px', marginTop: '4px' }}>تفعيل أو إخفاء ميزة سندات المبيعات</span>
+                    </div>
+                    <input type="checkbox" name="enable-sales-vouchers" defaultChecked={shopSettings.enableSalesVouchers ?? true} />
+                    <span></span>
+                  </label>
+                  <label className="switch" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
+                    <div>
+                      <b style={{ color: '#405259', fontSize: '13px' }}>سندات المشتريات</b>
+                      <span style={{ display: 'block', color: '#9ca8aa', fontSize: '10px', marginTop: '4px' }}>تفعيل أو إخفاء ميزة سندات المشتريات</span>
+                    </div>
+                    <input type="checkbox" name="enable-purchase-vouchers" defaultChecked={shopSettings.enablePurchaseVouchers ?? true} />
+                    <span></span>
+                  </label>
+                </div>
+                <button className="primary-button" type="submit" style={{ marginTop: '20px' }}><Check size={17} /> حفظ التغييرات</button>
               </form>
               <div className="card settings-card" style={{ marginTop: '20px' }}>
                 <div className="card-heading">
@@ -1571,7 +1622,11 @@ export default function Home() {
       </main>
 
       <nav className="mobile-nav">
-        {[...navItems, 
+        {[...navItems.filter(item => {
+          if (item.id === "sales-vouchers") return shopSettings.enableSalesVouchers !== false;
+          if (item.id === "purchase-vouchers") return shopSettings.enablePurchaseVouchers !== false;
+          return true;
+        }), 
           { id: "backup", label: "النسخ", icon: Download },
           { id: "settings", label: "الإعدادات", icon: Settings },
           { id: "license", label: "الترخيص", icon: ShieldCheck }
@@ -1723,7 +1778,7 @@ export default function Home() {
             </div>
             <div className="sales-voucher-fields">
               <label>العملة
-                <select name="currency" required value={selectedCurrencyId} onChange={(event) => setSelectedCurrencyId(Number(event.target.value))}>
+                <select name="currency" required defaultValue={shopSettings.defaultCurrencyId}>
                   {currencies.map((currency) => <option key={currency.id} value={currency.id}>{currency.name} ({currency.code})</option>)}
                 </select>
               </label>
@@ -1733,7 +1788,7 @@ export default function Home() {
                   {customers.map((customer) => <option key={customer.id} value={customer.name}>{customer.name}</option>)}
                 </select>
               </label>
-              <label>تاريخ الفاتورة <input name="date" type="date" required defaultValue="" /></label>
+              <label>تاريخ الفاتورة <input name="date" type="date" required defaultValue={new Date().toISOString().slice(0, 10)} /></label>
               <label>اسم المستلم / المسلم <input name="handover" placeholder="اختياري" /></label>
             </div>
             <div className="sales-lines-heading">
@@ -1800,28 +1855,48 @@ export default function Home() {
           <form className="modal" onSubmit={addTransaction}>
             <div className="modal-header">
               <div><span className="modal-kicker">تسجيل</span><h2>عملية جديدة</h2></div>
-              <button type="button" className="icon-button" onClick={() => setShowTransaction(false)}><X size={19} /></button>
+              <button type="button" className="icon-button" onClick={() => { setShowTransaction(false); setTxType("قبض"); }}><X size={19} /></button>
             </div>
+            <label>نوع العملية
+              <select name="type" value={txType} onChange={(e) => setTxType(e.target.value as any)}>
+                <option value="قبض">قبض (استلمت منه)</option>
+                <option value="صرف">صرف (سلمت له)</option>
+                <option value="قيد">تحويل (قيد بسيط)</option>
+              </select>
+            </label>
             <label>العملة
-              <select name="currency" required value={selectedCurrencyId} onChange={(event) => setSelectedCurrencyId(Number(event.target.value))}>
+              <select name="currency" required defaultValue={shopSettings.defaultCurrencyId}>
                 {currencies.map((currency) => <option key={currency.id} value={currency.id}>{currency.name} ({currency.code})</option>)}
               </select>
             </label>
-            <label>العميل المربوط بالعملية
-              <select name="customer" required defaultValue="">
-                <option value="" disabled>اختر العميل...</option>
-                {customers.map((customer) => <option key={customer.id} value={customer.name}>{customer.name}</option>)}
-              </select>
-            </label>
-            <label>نوع العملية
-              <select name="type" defaultValue="قبض">
-                <option value="قبض">قبض (استلمت منه)</option>
-                <option value="صرف">صرف (سلمت له)</option>
-              </select>
-            </label>
+            
+            {txType === "قيد" ? (
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                <label>من حساب (الدائن)
+                  <select name="fromCustomer" required defaultValue="">
+                    <option value="" disabled>اختر...</option>
+                    {customers.map((customer) => <option key={customer.id} value={customer.name}>{customer.name}</option>)}
+                  </select>
+                </label>
+                <label>إلى حساب (المدين)
+                  <select name="toCustomer" required defaultValue="">
+                    <option value="" disabled>اختر...</option>
+                    {customers.map((customer) => <option key={customer.id} value={customer.name}>{customer.name}</option>)}
+                  </select>
+                </label>
+              </div>
+            ) : (
+              <label>العميل المربوط بالعملية
+                <select name="customer" required defaultValue={selectedCustomer ? selectedCustomer.name : ""}>
+                  <option value="" disabled>اختر العميل...</option>
+                  {customers.map((customer) => <option key={customer.id} value={customer.name}>{customer.name}</option>)}
+                </select>
+              </label>
+            )}
+
             <label>المبلغ <input name="amount" required type="number" min="1" placeholder="0" /></label>
-            <label>التاريخ <input name="date" required type="date" defaultValue="" /></label>
-            <label>البيان / التفاصيل <input name="note" placeholder="شرح موجز للعملية" /></label>
+            <label>التاريخ <input name="date" required type="date" defaultValue={new Date().toISOString().slice(0, 10)} /></label>
+            <label>البيان / التفاصيل <input name="note" placeholder={txType === 'قيد' ? "شرح القيد (اختياري)" : "شرح موجز للعملية"} /></label>
             <label>المستلم / المسلم <input name="handover" placeholder="اختياري" /></label>
             <div className="modal-actions">
               <button type="button" className="secondary-button" onClick={() => setShowTransaction(false)}>إلغاء</button>
