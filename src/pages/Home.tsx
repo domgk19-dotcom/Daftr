@@ -13,15 +13,15 @@ type Customer = DbCustomer;
 type Transaction = DbTransaction;
 
 const navItems = [
-  { id: "overview", label: "نظرة عامة", icon: LayoutDashboard },
-  { id: "accounts", label: "العملاء / الموردين", icon: UsersRound },
-  { id: "transactions", label: "سجل العمليات", icon: ArrowDownLeft },
-  { id: "sales-vouchers", label: "سندات المبيعات", icon: FileText },
-  { id: "purchase-vouchers", label: "سندات المشتريات", icon: FileText },
-  { id: "currencies", label: "العملات", icon: CircleDollarSign },
-  { id: "reports", label: "التقارير", icon: FileBarChart },
-  { id: "analytics", label: "ذكاء الأعمال", icon: Sparkles },
-  { id: "whatsapp", label: "مراسلة العملاء", icon: MessageCircle },
+  { id: "overview", label: "نظرة عامة", icon: LayoutDashboard, color: "#3b82f6" },
+  { id: "accounts", label: "العملاء / الموردين", icon: UsersRound, color: "#8b5cf6" },
+  { id: "transactions", label: "سجل العمليات", icon: ArrowDownLeft, color: "#10b981" },
+  { id: "sales-vouchers", label: "سندات المبيعات", icon: FileText, color: "#f97316" },
+  { id: "purchase-vouchers", label: "سندات المشتريات", icon: FileText, color: "#f43f5e" },
+  { id: "currencies", label: "العملات", icon: CircleDollarSign, color: "#eab308" },
+  { id: "reports", label: "التقارير", icon: FileBarChart, color: "#06b6d4" },
+  { id: "analytics", label: "ذكاء الأعمال", icon: Sparkles, color: "#6366f1" },
+  { id: "whatsapp", label: "مراسلة العملاء", icon: MessageCircle, color: "#059669" },
 ];
 
 const formatMoney = (value: number, currency?: Pick<DbCurrency, "symbol" | "code">) => `${Math.abs(value).toLocaleString("en-US")} ${currency?.symbol || currency?.code || ""}`.trim();
@@ -1627,14 +1627,27 @@ export default function Home() {
           if (item.id === "purchase-vouchers") return shopSettings.enablePurchaseVouchers !== false;
           return true;
         }), 
-          { id: "backup", label: "النسخ", icon: Download },
-          { id: "settings", label: "الإعدادات", icon: Settings },
-          { id: "license", label: "الترخيص", icon: ShieldCheck }
-        ].map(({ id, label, icon: Icon }) => (
-          <button key={id} className={activeView === id ? "active" : ""} onClick={() => handleNav(id)}>
-            <Icon size={19} /><span>{label}</span>
-          </button>
-        ))}
+          { id: "backup", label: "النسخ", icon: Download, color: "#0ea5e9" },
+          { id: "settings", label: "الإعدادات", icon: Settings, color: "#64748b" },
+          { id: "license", label: "الترخيص", icon: ShieldCheck, color: "#d97706" }
+        ].map(({ id, label, icon: Icon, color }) => {
+          const isActive = activeView === id;
+          return (
+            <button 
+              key={id} 
+              className={isActive ? "active" : ""} 
+              onClick={() => handleNav(id)}
+              style={isActive ? { 
+                color: color, 
+                "--active-bg": `${color}1A`, 
+                boxShadow: `0 2px 8px ${color}26`
+              } as React.CSSProperties : {}}
+            >
+              <Icon size={21} color={isActive ? color : "#8ea1a3"} strokeWidth={isActive ? 2.5 : 2} style={!isActive ? { opacity: 0.85 } : {}} />
+              <span style={{ color: isActive ? color : "#8ea1a3" }}>{label}</span>
+            </button>
+          );
+        })}
       </nav>
 
       {waCustomerForPdf && (
